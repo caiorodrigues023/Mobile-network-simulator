@@ -4,6 +4,8 @@
 
 import numpy as np
 
+from .config import D_0, K_CONST, PATHLOSS_EXP, SIGMA_R, SIGMA_X
+
 # ---------------------------------------------------------------------------
 # Geometria angular
 # ---------------------------------------------------------------------------
@@ -45,7 +47,7 @@ def gerar_shadowing(ues: list, aps: list) -> np.ndarray:
     Variável aleatória log-normal(μ=0, σ=2).
     Retorna: matriz (n_ues, n_aps).
     """
-    return np.random.lognormal(0, 2, size=(len(ues), len(aps)))
+    return np.random.lognormal(0, SIGMA_X, size=(len(ues), len(aps)))
 
 
 def gerar_rayleigh(ues: list, aps: list, sigma_r: float = 0.70710678) -> np.ndarray:
@@ -55,8 +57,8 @@ def gerar_rayleigh(ues: list, aps: list, sigma_r: float = 0.70710678) -> np.ndar
     Retorna: matriz (n_ues, n_aps).
     """
     shape = (len(ues), len(aps))
-    x1 = np.random.normal(0, sigma_r, size=shape)
-    x2 = np.random.normal(0, sigma_r, size=shape)
+    x1 = np.random.normal(0, SIGMA_R, size=shape)
+    x2 = np.random.normal(0, SIGMA_R, size=shape)
     return np.sqrt(x1**2 + x2**2)
 
 
@@ -71,34 +73,32 @@ def gain_matrix(
     G: np.ndarray,
     shadowing: np.ndarray = None,
     use_rayleigh: bool = False,
-    sigma_r: float = 0.70710678,
 ) -> np.ndarray:
     """
     Calcula a matriz de ganho de canal combinando path loss (d⁻⁴),
     shadowing log-normal, fast fading opcional e ganho de antena G.
     """
-    # 1. Tratamento do Shadowing
     if shadowing is None:
         shadowing = gerar_shadowing(ues, aps)
-    shadowing = np.asarray(shadowing)
-    if shadowing.ndim == 2:
-        shadowing = shadowing[:, :, None]  # adiciona dimensão de feixe
 
-    # 2. Tratamento do Rayleigh Fading (Nova Lógica)
+    shadowing = np.asarray(shadowing)
+
+    if shadowing.ndim == 2:
+        shadowing = shadowing[:, :, None]
+
+    # Rayleigh Fast Fading
     rayleigh = 1.0
     if use_rayleigh:
-        rayleigh = gerar_rayleigh(ues, aps, sigma_r)
+        rayleigh = gerar_rayleigh(ues, aps)
         if rayleigh.ndim == 2:
-            rayleigh = rayleigh[:, :, None]  # adiciona dimensão de feixe
+            rayleigh = rayleigh[:, :, None]
 
-    # 3. Cálculo da Distância
     ue_xy = np.array([[ue.x, ue.y] for ue in ues], dtype=float)
     ap_xy = np.array([[ap.x, ap.y] for ap in aps], dtype=float)
-    d = np.linalg.norm(ue_xy[:, None, :] - ap_xy[None, :, :], axis=2)  # (n_ues, n_aps)
-    d = np.maximum(d, 1.0)
+    d = np.linalg.norm(ue_xy[:, None, :] - ap_xy[None, :, :], axis=2)
+    d = np.maximum(d, D_0)
 
-    # 4. Ganho Final (Multiplicando Rayleigh ao quadrado para virar potência)
-    return shadowing * (rayleigh**2) * 1e-4 / (d[:, :, None] ** 4) * G
+    return shadowing * (rayleigh**2) * K_CONST / (d[:, :, None] ** PATHLOSS_EXP) * G
 
 
 # ---------------------------------------------------------------------------
