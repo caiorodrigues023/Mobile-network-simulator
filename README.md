@@ -20,7 +20,6 @@ mobile-network-simulator/
 │       ├── metrics.py         # SINR, SINR_adaptive, capacidade de Shannon
 │       ├── runner.py          # Motor Monte Carlo e posicionamento de APs
 │       └── visualization.py   # Mapas 2D, CDFs e gráficos de KPI
-├── tests/                     # Testes unitários (Pytest)
 ├── pyproject.toml             # Configuração do pacote (pip install -e .)
 ├── main.py                    # Ponto de entrada do simulador
 ├── scichal.py                 # Código original (referência)
