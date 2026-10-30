@@ -5,22 +5,7 @@ Compara o desempenho de quatro tecnologias de antena — **Omnidirecional, Setor
 
 ---
 
-## ✨ Funcionalidades
-
-| Módulo | O que faz |
-|---|---|
-| **Omni** | Antena omnidirecional de referência (baseline) |
-| **Setorial** | 3 setores de 120°, ganho fixo por setor |
-| **SMB** | Arranjo circular uniforme (UCA) com `J` feixes pré-definidos |
-| **MRC Adaptativo** | Beamforming adaptativo em tempo real; suporta erro de estimativa de AoA |
-
-**KPIs calculados:** SINR por UE, Capacidade de Shannon (Mbps), Soma-capacidade por célula.
-
-**Visualizações:** mapas 2D de cobertura, CDFs, gráficos de barras comparativos e padrões polares SMB.
-
----
-
-## 📂 Estrutura do Projeto
+## Estrutura do Projeto
 
 ```text
 mobile-network-simulator/
@@ -38,7 +23,7 @@ mobile-network-simulator/
 ├── tests/                     # Testes unitários (Pytest)
 ├── pyproject.toml             # Configuração do pacote (pip install -e .)
 ├── main.py                    # Ponto de entrada do simulador
-├── scichal.py                 # Código monolítico original (referência)
+├── scichal.py                 # Código original (referência)
 └── ARCHITECTURE.md            # Guia de arquitetura detalhado
 ```
 
@@ -46,42 +31,7 @@ mobile-network-simulator/
 
 ---
 
-## 🚀 Instalação
-
-### Pré-requisitos
-
-- Python ≥ 3.9
-- [`uv`](https://docs.astral.sh/uv/) (gerenciador de ambientes, recomendado) **ou** `pip`
-
-### Com `uv` (recomendado)
-
-```bash
-# 1. Clonar o repositório
-git clone https://github.com/SEU-USUARIO/mobile-network-simulator.git
-cd mobile-network-simulator
-
-# 2. Criar e ativar o ambiente virtual
-uv venv .venv
-.venv\Scripts\activate          # Windows
-# source .venv/bin/activate     # Linux / macOS
-
-# 3. Instalar o pacote em modo editável
-#    Qualquer alteração nos arquivos de src/ é aplicada imediatamente
-uv pip install -e .
-```
-
-### Com `pip`
-
-```bash
-python -m venv .venv
-.venv\Scripts\activate          # Windows
-# source .venv/bin/activate     # Linux / macOS
-pip install -e .
-```
-
----
-
-## ▶️ Como Usar o Simulador
+## Como Usar o Simulador
 
 ### 1. Executar o script principal
 
@@ -214,7 +164,7 @@ plot_padroes_smb(configs=[(8, 8), (8, 16), (16, 8)])
 
 ---
 
-## 🔬 Modelos de Antena
+## Modelos de Antena
 
 ### Omnidirecional (`omni`)
 Ganho unitário em todas as direções. Usado como *baseline* de comparação.
@@ -235,7 +185,7 @@ O sufixo numérico indica o desvio-padrão do erro de estimativa de AoA em graus
 
 ---
 
-## 🤝 Guia para Colaboradores
+## Guia de uso
 
 ### Fluxo de trabalho Git
 
@@ -262,10 +212,7 @@ git checkout -b feature/modelo-canal-3gpp
 git add src/simulator/channel.py
 git commit -m "feat(channel): adiciona modelo de path loss 3GPP UMa"
 
-# 4. Rode os testes antes de qualquer push
-pytest
-
-# 5. Envie a branch e abra o Pull Request
+# 4. Envie a branch e abra o Pull Request
 git push origin feature/modelo-canal-3gpp
 ```
 
@@ -328,62 +275,8 @@ def minha_metrica(ues: list, resultados: dict, **kwargs):
 resultados[model]['minha_metrica'].append(minha_metrica(ues, ...))
 ```
 
-3. **Adicione a visualização** (opcional) em `visualization.py`.
-
-### Adicionando testes unitários
-
-Crie o arquivo em `tests/` seguindo o padrão existente:
-
-```python
-# tests/test_meu_modulo.py
-import numpy as np
-from simulator import minha_funcao
-
-def test_caso_basico():
-    resultado = minha_funcao(entrada=...)
-    assert resultado.shape == (esperado,)
-
-def test_valor_limite():
-    # Testa comportamento na fronteira (ex.: distância mínima, ganho máximo)
-    ...
-```
-
-Execute com:
-
-```bash
-pytest                  # todos os testes
-pytest tests/test_meu_modulo.py -v   # apenas os seus
-pytest --tb=short       # traceback compacto
-```
-
-### Boas práticas de código
-
-- **Não use variáveis globais com estado mutável** — use parâmetros de função.
-- **Docstrings obrigatórias** em toda função pública (explique entradas, saídas e unidades).
-- **Type hints** nas assinaturas: `def fn(ues: list, N: int) -> np.ndarray`.
-- **Sem `import *`** — importe apenas o que usar.
 - Ao comparar modelos, **use o mesmo shadowing** pré-sorteado para garantir condições justas.
 
----
-
-## 🧪 Testes
-
-```bash
-pytest                  # roda toda a suíte
-pytest -v               # saída detalhada
-pytest --tb=short       # traceback compacto em caso de falha
-```
-
----
-
-## 📖 Referências
-
-- R. Agarwal *et al.*, **"Switched Multi-Beam Antenna Systems"**, IEEE.
-- T. Rappaport, *Wireless Communications: Principles and Practice*, Prentice Hall.
-- Roteiro de laboratório — GTEL/UFC.
-
----
-
-## 📄 Licença
+## Licença
 
 Uso acadêmico — GTEL, Universidade Federal do Ceará.
