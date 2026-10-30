@@ -5,16 +5,16 @@
 import numpy as np
 from tqdm import tqdm
 
-from .entities import AP, UE
-from .antennas import antenna_gain
-from .channel import gerar_shadowing, gain_matrix, adaptive_gains
 from .allocation import attach_AP_UE
+from .antennas import antenna_gain
+from .channel import adaptive_gains, gain_matrix, gerar_shadowing
+from .entities import AP, UE
 from .metrics import SINR, SINR_adaptive, channel_capacity
-
 
 # ---------------------------------------------------------------------------
 # Posicionamento de APs em grade uniforme
 # ---------------------------------------------------------------------------
+
 
 def distribuir_AP(M: int) -> list:
     """
@@ -34,6 +34,7 @@ def distribuir_AP(M: int) -> list:
 # ---------------------------------------------------------------------------
 # Geração de cenário para visualização
 # ---------------------------------------------------------------------------
+
 
 def cenario_aleatorio(M: int, K: int, seed: int = None) -> tuple:
     """
@@ -58,13 +59,25 @@ def cenario_aleatorio(M: int, K: int, seed: int = None) -> tuple:
 # Experimento de Monte Carlo
 # ---------------------------------------------------------------------------
 
-def simular_experimento(M: int, N: int, K: int, sim: int,
-                         allocation: str = '',
-                         antenna_models: tuple = ('omni', 'adaptive',
-                                                   'adaptive_1', 'adaptive_5',
-                                                   'adaptive_10'),
-                         shadowing_params: dict = None,
-                         L: int = 8, J: int = 8) -> dict:
+
+def simular_experimento(
+    M: int,
+    N: int,
+    K: int,
+    sim: int,
+    allocation: str = "",
+    antenna_models: tuple = (
+        "omni",
+        "adaptive",
+        "adaptive_1",
+        "adaptive_5",
+        "adaptive_10",
+    ),
+    shadowing_params: dict = None,
+    use_rayleigh=False,
+    L: int = 8,
+    J: int = 8,
+) -> dict:
     """
     Executa 'sim' iterações de Monte Carlo para os modelos de antena indicados.
 
@@ -77,13 +90,14 @@ def simular_experimento(M: int, N: int, K: int, sim: int,
     allocation      : modo de alocação de canal ('random' ou ortogonal).
     antenna_models  : tupla de modelos a simular.
     L, J            : parâmetros do arranjo SMB/MRC.
+    use_rayleigh    : se True, utiliza fading de Rayleigh.
 
     Retorna dicionário:
         {model: {'power': [...], 'sinr': [...], 'cap': [...], 'sum_cap': média}}
     """
     aps = distribuir_AP(M)
     resultados = {
-        model: {'power': [], 'sinr': [], 'cap': [], 'sum_cap': []}
+        model: {"power": [], "sinr": [], "cap": [], "sum_cap": []}
         for model in antenna_models
     }
 
@@ -100,22 +114,23 @@ def simular_experimento(M: int, N: int, K: int, sim: int,
                 ap.ues = []
 
             G = antenna_gain(ues, aps, model=model, L=L, J=J)
-            gains = gain_matrix(ues, aps, G, shadowing=shadowing)
+            gains = gain_matrix(
+                ues, aps, G, shadowing=shadowing, use_rayleigh=use_rayleigh
+            )
             attach_AP_UE(ues, aps, gains)
 
             # --- Lógica adaptativa (com extração de erro de AoA) ---
-            if model.startswith('adaptive'):
+            if model.startswith("adaptive"):
                 err_deg = 0.0
-                if '_' in model:
+                if "_" in model:
                     try:
-                        err_deg = float(model.split('_')[1])
+                        err_deg = float(model.split("_")[1])
                     except ValueError:
                         pass
 
                 Gm = adaptive_gains(ues, aps, L=L, aoa_err_deg=err_deg)
                 s = SINR_adaptive(ues, N, gains, Gm)
-                power = [ue.gain * ue.power * Gm[k, k]
-                         for k, ue in enumerate(ues)]
+                power = [ue.gain * ue.power * Gm[k, k] for k, ue in enumerate(ues)]
             else:
                 s = SINR(ues, N, gains, G)
                 power = [ue.gain * ue.power for ue in ues]
@@ -123,18 +138,16 @@ def simular_experimento(M: int, N: int, K: int, sim: int,
             cap = channel_capacity(s, N)
             sum_cap = float(np.sum(cap))
 
-            resultados[model]['power'].extend(power)
-            resultados[model]['sinr'].extend(s)
-            resultados[model]['cap'].extend(cap)
-            resultados[model]['sum_cap'].append(sum_cap)
+            resultados[model]["power"].extend(power)
+            resultados[model]["sinr"].extend(s)
+            resultados[model]["cap"].extend(cap)
+            resultados[model]["sum_cap"].append(sum_cap)
 
             for ap in aps:
                 ap.ues = []
 
     # Média da soma de capacidades ao longo das iterações
     for model in antenna_models:
-        resultados[model]['sum_cap'] = float(
-            np.mean(resultados[model]['sum_cap'])
-        )
+        resultados[model]["sum_cap"] = float(np.mean(resultados[model]["sum_cap"]))
 
     return resultados
