@@ -77,7 +77,7 @@ LOAD_CONFIGS   = {'K=1': 1, 'K=4': 4, 'K=8': 8}  # label → nº de UEs
 | `M` | Número de APs | Deve ser quadrado perfeito |
 | `N` | Canais ortogonais disponíveis | Aumentar reduz interferência |
 | `K` | UEs por iteração | Aumentar aumenta a carga |
-| `SIM` | Iterações Monte Carlo | ≥ 200 para CDFs suaves |
+| `SIM` | Iterações Monte Carlo | ~ 10000 |
 | `L` | Elementos do UCA (SMB/MRC) | Passado em `simular_experimento()` |
 | `J` | Feixes pré-definidos do SMB | Passado em `simular_experimento()` |
 | `allocation` | `'random'` ou `'ortogonal'` | Ortogonal reduz interferência intra-célula |
