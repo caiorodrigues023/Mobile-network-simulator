@@ -10,7 +10,7 @@ from .config import _LAMBDA
 
 
 # ---------------------------------------------------------------------------
-# SMB — Switched Multi-Beam com Uniform Circular Array (Apêndice A/B)
+# SMB — Switched Multi-Beam com Uniform Circular Array
 # ---------------------------------------------------------------------------
 
 @lru_cache(maxsize=None)
@@ -47,7 +47,7 @@ def smb_gains(phi, L: int = 8, J: int = 8) -> np.ndarray:
 
 
 # ---------------------------------------------------------------------------
-# Beamforming adaptativo MRC (Exercício 3)
+# Beamforming adaptativo MRC
 # ---------------------------------------------------------------------------
 
 def _uca_steering(phi, L: int) -> np.ndarray:
