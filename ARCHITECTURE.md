@@ -4,7 +4,7 @@ Este documento descreve a estrutura modular do projeto, as responsabilidades de 
 
 ---
 
-## 📂 Estrutura de Diretórios
+## Estrutura de Diretórios
 
 ```text
 mobile-network-simulator/
@@ -15,13 +15,10 @@ mobile-network-simulator/
 │       ├── entities.py           # Abstração de hardware: AP (Access Point) e UE (User Equipment)
 │       ├── antennas.py           # Modelos e diagramas de irradiação (Omni, Setorial, SMB, MRC)
 │       ├── channel.py            # Modelagem de propagação: Path Loss, Shadowing e Geometria
-│       ├── allocation.py       # Acesso inicial (Attach), Alocação de Canais e DPC
+│       ├── allocation.py         # Acesso inicial (Attach), Alocação de Canais e DPC
 │       ├── metrics.py            # Cálculo de SINR (estático e adaptativo) e Capacidade de Shannon
 │       ├── runner.py             # Motor do experimento: orquestra rodadas e distribui APs
-│       └── visualization.py    # Geração de mapas 2D, gráficos CDF e comparações de KPI
-├── tests/                        # Testes unitários automatizados com Pytest
-│   ├── test_antennas.py
-│   └── test_metrics.py
+│       └── visualization.py      # Geração de mapas 2D, gráficos CDF e comparações de KPI
 ├── pyproject.toml                # Configuração de empacotamento e dependências (pip install -e .)
 ├── requirements.txt              # Bibliotecas externas necessárias
 ├── .gitignore                    # Arquivos ignorados pelo Git
@@ -31,7 +28,7 @@ mobile-network-simulator/
 
 ---
 
-## 📄 Responsabilidade de Cada Arquivo
+## Responsabilidade de Cada Arquivo
 
 ### 1. `src/simulator/config.py`
 * **Função**: Centralizar constantes físicas e configurações de interface gráfica.
@@ -88,52 +85,6 @@ mobile-network-simulator/
 
 ---
 
-## 🔗 Como os Arquivos se Conectam (Mapa de Dependências)
-
-Abaixo está o diagrama mostrando como os módulos importam recursos uns dos outros:
-
-```text
-               +-------------------+
-               |     config.py     |
-               +---------+---------+
-                         |
-      +------------------+------------------+
-      |                  |                  |
-      v                  v                  v
-+-----------+     +-------------+    +---------------+
-|entities.py|     | antennas.py |    |visualization.py
-+-----+-----+     +------+------+    +-------+-------+
-      |                  |                   |
-      +--------+---------+                   |
-               |                             |
-               v                             |
-       +---------------+                     |
-       |  channel.py   |                     |
-       +-------+-------+                     |
-               |                             |
-               v                             |
-      +-----------------+                    |
-      |  allocation.py  |                    |
-      +--------+--------+                    |
-               |                             |
-               v                             |
-      +-----------------+                    |
-      |   metrics.py    |                    |
-      +--------+--------+                    |
-               |                             |
-               +--------------+--------------+
-                              |
-                              v
-                      +---------------+
-                      |   runner.py   |
-                      +-------+-------+
-                              |
-                              v
-                         +---------+
-                         | main.py |
-                         +---------+
-```
-
 ### Fluxo de Dados Durante Uma Rodada de Simulação
 
 1. **Grade & Entidades**: `runner.py` chama `distribuir_AP()` (`entities.py`) para criar as estações rádio-base.
@@ -146,55 +97,3 @@ Abaixo está o diagrama mostrando como os módulos importam recursos uns dos out
 8. **Visualização**: `runner.py` devolve os dicionários de dados consolidados para o `main.py`, que invoca as rotinas de gráfico do `visualization.py`.
 
 ---
-
-## 🚀 Como Configurar e Rodar o Projeto na Sua Máquina
-
-### 1. Clonar e Criar o Ambiente Virtual
-
-```bash
-git clone https://github.com/SEU-USUARIO/mobile-network-simulator.git
-cd mobile-network-simulator
-
-# Criar ambiente virtual
-python -m venv .venv
-
-# Ativar ambiente virtual
-# Linux/macOS:
-source .venv/bin/activate
-# Windows:
-# .venv\Scripts\activate
-```
-
-### 2. Instalar o Pacote em Modo Editável (`-e`)
-
-A presença do arquivo `pyproject.toml` permite que o Python trate a pasta `src/simulator` como um pacote instalado no ambiente virtual. Qualquer alteração no código fonte é aplicada **instantaneamente**, sem necessidade de reinstalação.
-
-```bash
-pip install -e .
-```
-
-### 3. Rodar os Testes Unitários
-
-Para garantir que a matemática do sistema não foi violada por alterações recentes:
-
-```bash
-pytest
-```
-
-### 4. Executar o Simulador Principal
-
-```bash
-python main.py
-```
-
----
-
-## 🛠️ Boas Práticas para Desenvolvimento em Equipe
-
-1. **Nunca faça `commit` direto na branch `main`**.
-2. Criar branches temáticas:
-   * `feature/modelo-canal-3gpp`
-   * `fix/correcao-calculo-sinr`
-   * `docs/atualiza-readme`
-3. **Sempre rode os testes (`pytest`)** antes de abrir um *Pull Request* (PR).
-4. Evite variáveis globais com estado mutável.
