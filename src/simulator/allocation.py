@@ -6,11 +6,9 @@ import random
 
 import numpy as np
 
-from .channel import angle
 from .config import (
     GAMMA_MAX_DB,
     GAMMA_MIN_DB,
-    GAMMA_TAR_INIT,
     MU_STEP,
     P_MAX_DBM,
     P_MIN_DBM,
@@ -21,23 +19,20 @@ from .config import (
 # ---------------------------------------------------------------------------
 
 
-def attach_AP_UE(ues: list, aps: list, gains: np.ndarray) -> None:
+def attach_AP_UE(gains: np.ndarray) -> tuple:
     """
-    Initial access: cada UE se associa ao par (AP, setor/feixe) com o MAIOR
-    ganho de canal, entre as M × B combinações (B = nº de setores/feixes por AP:
-    1 no omni, 3 no setorizado, J no SMB).
+    gains: matriz (K, M, B) de ganho total de canal.
+    Retorna:
+      - serving_ap: vetor (K,) com o índice do AP associado a cada UE.
+      - serving_beam: vetor (K,) com o índice do setor/feixe associado.
+    """
+    K = gains.shape[0]
+    # Encontra o índice linear do maior ganho para cada linha K
+    flat_indices = np.argmax(gains.reshape(K, -1), axis=1)
 
-    Preenche em cada UE: ue.ap, ue.beam, ue.gain, ue.dist e ue.angle.
-    Adiciona cada UE à lista ue.ap.ues.
-    """
-    for i, ue in enumerate(ues):
-        j, b = np.unravel_index(np.argmax(gains[i]), gains[i].shape)
-        ue.ap = aps[j]
-        ue.beam = int(b)
-        ue.gain = gains[i, j, b]
-        ue.dist = np.linalg.norm(np.array([ue.x, ue.y]) - np.array([ue.ap.x, ue.ap.y]))
-        ue.angle = angle(ue, ue.ap)
-        aps[j].ues.append(ue)
+    # Desempacota o índice linear para (M, B)
+    serving_ap, serving_beam = np.unravel_index(flat_indices, gains.shape[1:])
+    return serving_ap, serving_beam
 
 
 # ---------------------------------------------------------------------------
@@ -156,32 +151,20 @@ def DPC(
 
 
 def DPC_Dual_Loop(
-    ues: list,
-    N: int,
-    G: np.ndarray,
-    R: np.ndarray,
+    G_eff: np.ndarray,
+    P_n: float,
+    gamma_tar_db: np.ndarray,
+    ue_active: np.ndarray,
     t_outer: int = 35,
     t_inner: int = 15,
     tol_db: float = 0.5,
-) -> np.ndarray:
+) -> tuple:
     """
-    Joint MRC & Dual-Loop Power Control (Atividade 1 do SciChal4A).
+    Joint MRC & Dual-Loop Power Control.
     Utiliza as matrizes G (ganho antena) e R (ganho canal) extraídas dos UEs.
     """
-    K = len(ues)
+    K = G_eff.shape[0]
     P_dbm = np.full(K, P_MAX_DBM)
-    gamma_tar_db = np.full(K, GAMMA_TAR_INIT)
-    ue_active = np.ones(K, dtype=bool)
-
-    # Ruído térmico
-    pn = 1e8 * 1e-20 / N
-
-    # Extrai matrizes puras para vetorização
-    G_eff = np.zeros((K, K))
-    for i, ue in enumerate(ues):
-        for j, ue_interf in enumerate(ues):
-            if ue.channel == ue_interf.channel:
-                G_eff[i, j] = G[j, ue.ap.id] * R[j, ue.ap.id]
 
     for outer in range(t_outer):
         if not np.any(ue_active):
@@ -192,24 +175,24 @@ def DPC_Dual_Loop(
 
         for _ in range(inner_steps):
             p_watts = np.where(ue_active, 10.0 ** (P_dbm / 10.0) / 1000.0, 0.0)
+            rx_tot = G_eff @ p_watts
+            rx_util = np.diagonal(G_eff) * p_watts
+            interf = rx_tot - rx_util
+            sinr_lin = np.where(p_watts > 0, rx_util / (interf + P_n), 0.0)
 
-            # Cálculo de SINR Vetorizado
-            total_rx = G_eff @ p_watts
-            util = np.diagonal(G_eff) * p_watts
-            interf = total_rx - util
-            sinr_lin = np.where(p_watts > 0, util / (interf + pn), 0.0)
-
-            # UD-DPC Step
             direcao = np.sign(gamma_tar_lin - sinr_lin)
-            P_next = np.clip(P_dbm + MU_STEP * direcao, P_MIN_DBM, P_MAX_DBM)
-            P_dbm = np.where(ue_active, P_next, P_dbm)
+            P_dbm = np.where(
+                ue_active,
+                np.clip(P_dbm + MU_STEP * direcao, P_MIN_DBM, P_MAX_DBM),
+                P_dbm,
+            )
 
-        # Avaliação de Metas (Outer Loop)
+        # Outer Loop
         p_watts = np.where(ue_active, 10.0 ** (P_dbm / 10.0) / 1000.0, 0.0)
-        total_rx = G_eff @ p_watts
-        util = np.diagonal(G_eff) * p_watts
-        interf = total_rx - util
-        sinr_lin = np.where(p_watts > 0, util / (interf + pn), 0.0)
+        rx_tot = G_eff @ p_watts
+        rx_util = np.diagonal(G_eff) * p_watts
+        interf = rx_tot - rx_util
+        sinr_lin = np.where(p_watts > 0, rx_util / (interf + P_n), 0.0)
         sinr_db = 10.0 * np.log10(sinr_lin + 1e-30)
 
         target_changed = False
@@ -221,7 +204,7 @@ def DPC_Dual_Loop(
             if (sinr_db[k] >= gamma_tar_db[k] - tol_db) and (P_dbm[k] < P_MAX_DBM):
                 gamma_tar_db[k] = min(GAMMA_MAX_DB, gamma_tar_db[k] + 1.0)
             elif (P_dbm[k] >= P_MAX_DBM) and (sinr_db[k] < gamma_tar_db[k] - tol_db):
-                gamma_tar_db[k] = gamma_tar_db[k] - 1.0
+                gamma_tar_db[k] -= 1.0
 
             if gamma_tar_db[k] < GAMMA_MIN_DB:
                 ue_active[k] = False
@@ -232,7 +215,5 @@ def DPC_Dual_Loop(
         if not target_changed:
             break
 
-    # Salva potências finais nos UEs
     p_watts_final = np.where(ue_active, 10.0 ** (P_dbm / 10.0) / 1000.0, 0.0)
-    for i, ue in enumerate(ues):
-        ue.power = p_watts_final[i]
+    return p_watts_final, sinr_lin

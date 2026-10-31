@@ -2,27 +2,35 @@
 # visualization.py — Mapas 2D, CDFs e comparações de KPI
 # ---------------------------------------------------------------------------
 
-import numpy as np
 import matplotlib.pyplot as plt
-from matplotlib.patches import Wedge, Circle
+import numpy as np
 from matplotlib.lines import Line2D
+from matplotlib.patches import Circle, Wedge
 
-from .config import MODEL_LABELS, MODEL_COLORS
-from .antennas import antenna_gain, smb_gains, mrc_gain
-from .channel import gerar_shadowing, gain_matrix, adaptive_gains
 from .allocation import attach_AP_UE
+from .antennas import antenna_gain, mrc_gain, smb_gains
+from .channel import adaptive_gains, gain_matrix, gerar_shadowing
+from .config import MODEL_COLORS, MODEL_LABELS
 from .metrics import SINR, SINR_adaptive
-
 
 # ---------------------------------------------------------------------------
 # Mapa 2D do cenário
 # ---------------------------------------------------------------------------
 
-def plotar_mapa(aps: list, ues: list, shadowing: np.ndarray = None,
-                models: list = ('omni', 'sector', 'smb', 'adaptive'),
-                r_ap: float = 110.0, L: int = 8, J: int = 8,
-                show_sinr: bool = True, N: int = 1,
-                savepath: str = None, show: bool = True) -> None:
+
+def plotar_mapa(
+    aps: list,
+    ues: list,
+    shadowing: np.ndarray = None,
+    models: list = ("omni", "sector", "smb", "adaptive"),
+    r_ap: float = 110.0,
+    L: int = 8,
+    J: int = 8,
+    show_sinr: bool = True,
+    N: int = 1,
+    savepath: str = None,
+    show: bool = True,
+) -> None:
     """
     Desenha o mapa 2D da área de cobertura, um painel por modelo de antena,
     todos com OS MESMOS APs, UEs e shadowing (comparação justa).
@@ -33,11 +41,11 @@ def plotar_mapa(aps: list, ues: list, shadowing: np.ndarray = None,
     n = len(models)
     fig, axes = plt.subplots(1, n, figsize=(7.2 * n, 7.6), squeeze=False)
     axes = axes[0]
-    cmap = plt.get_cmap('tab20')
-    sector_colors = ['tab:blue', 'tab:red', 'tab:green']
-    theta_b = [0, 120, 240]                                     # graus, 3 setores
+    cmap = plt.get_cmap("tab20")
+    sector_colors = ["tab:blue", "tab:red", "tab:green"]
+    theta_b = [0, 120, 240]  # graus, 3 setores
     th = np.linspace(0, 2 * np.pi, 721)
-    curves = smb_gains(th, L=L, J=J) / L if 'smb' in models else None
+    curves = smb_gains(th, L=L, J=J) / L if "smb" in models else None
 
     for ax, model in zip(axes, models):
         # Reseta e refaz o attachment para este modelo
@@ -50,16 +58,17 @@ def plotar_mapa(aps: list, ues: list, shadowing: np.ndarray = None,
         gains = gain_matrix(ues, aps, G, shadowing=shadowing)
         attach_AP_UE(ues, aps, gains)
 
-        if model.startswith('adaptive'):
+        if model.startswith("adaptive"):
             err_deg = 0.0
-            if '_' in model:
+            if "_" in model:
                 try:
-                    err_deg = float(model.split('_')[1])
+                    err_deg = float(model.split("_")[1])
                 except ValueError:
                     pass
             sinr = np.asarray(
-                SINR_adaptive(ues, N, gains,
-                              adaptive_gains(ues, aps, L=L, aoa_err_deg=err_deg))
+                SINR_adaptive(
+                    ues, N, gains, adaptive_gains(ues, aps, L=L, aoa_err_deg=err_deg)
+                )
             ).flatten()
         else:
             sinr = np.asarray(SINR(ues, N, gains, G)).flatten()
@@ -69,21 +78,35 @@ def plotar_mapa(aps: list, ues: list, shadowing: np.ndarray = None,
 
         # --- padrões de antena ---
         for ap in aps:
-            if model == 'omni':
-                ax.add_patch(Circle((ap.x, ap.y), r_ap * 0.7,
-                                    fc='tab:blue', alpha=0.10,
-                                    ec='tab:blue', lw=0.8, zorder=1))
-            elif model == 'sector':
+            if model == "omni":
+                ax.add_patch(
+                    Circle(
+                        (ap.x, ap.y),
+                        r_ap * 0.7,
+                        fc="tab:blue",
+                        alpha=0.10,
+                        ec="tab:blue",
+                        lw=0.8,
+                        zorder=1,
+                    )
+                )
+            elif model == "sector":
                 for b in range(3):
                     ativo = (ap.id, b) in ativos
-                    ax.add_patch(Wedge(
-                        (ap.x, ap.y), r_ap,
-                        theta_b[b] - 60, theta_b[b] + 60,
-                        fc=sector_colors[b],
-                        alpha=0.50 if ativo else 0.12,
-                        ec=sector_colors[b], lw=1.0, zorder=1,
-                    ))
-            elif model == 'smb':
+                    ax.add_patch(
+                        Wedge(
+                            (ap.x, ap.y),
+                            r_ap,
+                            theta_b[b] - 60,
+                            theta_b[b] + 60,
+                            fc=sector_colors[b],
+                            alpha=0.50 if ativo else 0.12,
+                            ec=sector_colors[b],
+                            lw=1.0,
+                            zorder=1,
+                        )
+                    )
+            elif model == "smb":
                 for k in range(J):
                     r = r_ap * curves[:, k]
                     x_k = ap.x + r * np.cos(th)
@@ -93,11 +116,12 @@ def plotar_mapa(aps: list, ues: list, shadowing: np.ndarray = None,
                         ax.fill(x_k, y_k, color=c, alpha=0.45, zorder=2)
                         ax.plot(x_k, y_k, color=c, lw=1.6, zorder=2)
                     else:
-                        ax.plot(x_k, y_k, color='gray', lw=0.6,
-                                ls='--', alpha=0.7, zorder=1)
+                        ax.plot(
+                            x_k, y_k, color="gray", lw=0.6, ls="--", alpha=0.7, zorder=1
+                        )
 
         # --- feixes MRC adaptativos ---
-        if model.startswith('adaptive'):
+        if model.startswith("adaptive"):
             for ue in ues:
                 r = r_ap * mrc_gain(ue.angle, th, L) / L
                 x_u = ue.ap.x + r * np.cos(th)
@@ -109,53 +133,83 @@ def plotar_mapa(aps: list, ues: list, shadowing: np.ndarray = None,
         # --- ligações e UEs ---
         for ue, sdb in zip(ues, sinr_db):
             c = cmap(ue.ap.id % 20)
-            ax.plot([ue.x, ue.ap.x], [ue.y, ue.ap.y],
-                    color=c, lw=1.2, alpha=0.9, zorder=3)
-            ax.scatter(ue.x, ue.y, s=55, color=c,
-                       edgecolor='k', linewidth=0.8, zorder=6)
+            ax.plot(
+                [ue.x, ue.ap.x], [ue.y, ue.ap.y], color=c, lw=1.2, alpha=0.9, zorder=3
+            )
+            ax.scatter(
+                ue.x, ue.y, s=55, color=c, edgecolor="k", linewidth=0.8, zorder=6
+            )
             if show_sinr:
-                ax.annotate(f'{sdb:.1f} dB', (ue.x, ue.y),
-                            xytext=(5, 5), textcoords='offset points',
-                            fontsize=7, zorder=7)
+                ax.annotate(
+                    f"{sdb:.1f} dB",
+                    (ue.x, ue.y),
+                    xytext=(5, 5),
+                    textcoords="offset points",
+                    fontsize=7,
+                    zorder=7,
+                )
 
         # --- APs ---
         for ap in aps:
-            ax.scatter(ap.x, ap.y, marker='^', s=70, color='k', zorder=8)
-            ax.annotate(str(ap.id), (ap.x, ap.y),
-                        xytext=(4, -11), textcoords='offset points',
-                        fontsize=7, color='k', zorder=8)
+            ax.scatter(ap.x, ap.y, marker="^", s=70, color="k", zorder=8)
+            ax.annotate(
+                str(ap.id),
+                (ap.x, ap.y),
+                xytext=(4, -11),
+                textcoords="offset points",
+                fontsize=7,
+                color="k",
+                zorder=8,
+            )
 
         ax.set_xlim(0, 1000)
         ax.set_ylim(0, 1000)
-        ax.set_aspect('equal')
-        ax.set_facecolor('#f1f1f1')
-        ax.grid(True, linestyle=':', color='gray', alpha=0.5)
-        ax.set_xlabel('x (m)')
-        ax.set_ylabel('y (m)')
+        ax.set_aspect("equal")
+        ax.set_facecolor("#f1f1f1")
+        ax.grid(True, linestyle=":", color="gray", alpha=0.5)
+        ax.set_xlabel("x (m)")
+        ax.set_ylabel("y (m)")
         ax.set_title(
-            f'{MODEL_LABELS.get(model, model)}  |  '
-            f'SINR médio: {np.mean(sinr_db):.1f} dB'
+            f"{MODEL_LABELS.get(model, model)}  |  "
+            f"SINR médio: {np.mean(sinr_db):.1f} dB"
         )
 
     # --- Legenda ---
     handles = [
-        Line2D([], [], marker='^', color='k', ls='', label='AP'),
-        Line2D([], [], marker='o', color='gray', mfc='gray', mec='k',
-               ls='', label='UE (cor = AP servidor)'),
+        Line2D([], [], marker="^", color="k", ls="", label="AP"),
+        Line2D(
+            [],
+            [],
+            marker="o",
+            color="gray",
+            mfc="gray",
+            mec="k",
+            ls="",
+            label="UE (cor = AP servidor)",
+        ),
     ]
     last_model = models[-1]
-    if 'sector' in models:
-        handles.append(Line2D([], [], color='tab:red', lw=6,
-                              alpha=0.5, label='Setor ativo'))
-    if 'smb' in models:
-        handles.append(Line2D([], [], color='tab:green', lw=2,
-                              alpha=0.5, label='Feixe SMB ativo'))
-    if last_model.startswith('adaptive'):
-        handles.append(Line2D([], [], color='tab:purple', lw=4,
-                              alpha=0.5, label='Feixe MRC (Adaptativo)'))
+    if "sector" in models:
+        handles.append(
+            Line2D([], [], color="tab:red", lw=6, alpha=0.5, label="Setor ativo")
+        )
+    if "smb" in models:
+        handles.append(
+            Line2D([], [], color="tab:green", lw=2, alpha=0.5, label="Feixe SMB ativo")
+        )
+    if last_model.startswith("adaptive"):
+        handles.append(
+            Line2D(
+                [],
+                [],
+                color="tab:purple",
+                lw=4,
+                alpha=0.5,
+                label="Feixe MRC (Adaptativo)",
+            )
+        )
 
-    fig.legend(handles=handles, loc='lower center',
-               ncol=len(handles), frameon=False)
+    fig.legend(handles=handles, loc="lower center", ncol=len(handles), frameon=False)
     plt.tight_layout(rect=(0, 0.04, 1, 1))
 
     if savepath:
@@ -168,6 +222,7 @@ def plotar_mapa(aps: list, ues: list, shadowing: np.ndarray = None,
 # CDFs de Potência, SINR e Capacidade
 # ---------------------------------------------------------------------------
 
+
 def plot_cdfs(cdf_sinr: list, cdf_capacity: list) -> None:
     """
     Plota CDFs básicas de SINR e Capacidade para dois cenários de alocação.
@@ -178,28 +233,42 @@ def plot_cdfs(cdf_sinr: list, cdf_capacity: list) -> None:
     for i, data in enumerate(cdf_sinr):
         db_data = sorted(10 * np.log10(a) for a in data)
         percentis = np.linspace(0, 1, len(db_data))
-        axes[0].plot(db_data, percentis,
-                     label=f'SINR {"Per-AP" if i == 1 else "Random"} channel allocation')
+        axes[0].plot(
+            db_data,
+            percentis,
+            label=f"SINR {'Per-AP' if i == 1 else 'Random'} channel allocation",
+        )
 
-    axes[0].axhline(y=0.10, color='r', linewidth=0.7, linestyle='--', label='10th Percentil')
-    axes[0].axhline(y=0.50, color='b', linewidth=0.7, linestyle='--', label='50th Percentil')
-    axes[0].set_title('CDF do SINR por UE')
-    axes[0].set_xlabel('SINR (dB)')
-    axes[0].set_ylabel('Percentil')
+    axes[0].axhline(
+        y=0.10, color="r", linewidth=0.7, linestyle="--", label="10th Percentil"
+    )
+    axes[0].axhline(
+        y=0.50, color="b", linewidth=0.7, linestyle="--", label="50th Percentil"
+    )
+    axes[0].set_title("CDF do SINR por UE")
+    axes[0].set_xlabel("SINR (dB)")
+    axes[0].set_ylabel("Percentil")
     axes[0].legend()
     axes[0].grid(True)
 
     for i, data in enumerate(cdf_capacity):
         data_sorted = sorted(data)
         percentis = np.linspace(0, 1, len(data_sorted))
-        axes[1].plot(data_sorted, percentis,
-                     label=f'Cap. do Canal {"Per-AP" if i == 1 else "Random"} channel allocation')
+        axes[1].plot(
+            data_sorted,
+            percentis,
+            label=f"Cap. do Canal {'Per-AP' if i == 1 else 'Random'} channel allocation",
+        )
 
-    axes[1].axhline(y=0.10, color='r', linewidth=0.7, linestyle='--', label='10th Percentil')
-    axes[1].axhline(y=0.50, color='b', linewidth=0.7, linestyle='--', label='50th Percentil')
-    axes[1].set_title('CDF da Capacidade do Canal por UE')
-    axes[1].set_xlabel('Capacidade do Canal (Mbps)')
-    axes[1].set_ylabel('Percentil')
+    axes[1].axhline(
+        y=0.10, color="r", linewidth=0.7, linestyle="--", label="10th Percentil"
+    )
+    axes[1].axhline(
+        y=0.50, color="b", linewidth=0.7, linestyle="--", label="50th Percentil"
+    )
+    axes[1].set_title("CDF da Capacidade do Canal por UE")
+    axes[1].set_xlabel("Capacidade do Canal (Mbps)")
+    axes[1].set_ylabel("Percentil")
     axes[1].legend()
     axes[1].grid(True)
 
@@ -207,8 +276,9 @@ def plot_cdfs(cdf_sinr: list, cdf_capacity: list) -> None:
     plt.show()
 
 
-def plot_all_cdfs(resultados_por_carga: dict, load_labels: list,
-                  models: list = None) -> None:
+def plot_all_cdfs(
+    resultados_por_carga: dict, load_labels: list, models: list = None
+) -> None:
     """
     CDFs de potência recebida, SINR e capacidade para cada cenário de carga,
     comparando os modelos de antena com marcação dos percentis 10 e 50.
@@ -225,33 +295,36 @@ def plot_all_cdfs(resultados_por_carga: dict, load_labels: list,
         axes = axes.reshape(1, 3)
 
     kpi_specs = [
-        ('power', 'Potência Recebida',    'Potência Recebida (dBW)',      True),
-        ('sinr',  'SINR',                 'SINR (dB)',                    True),
-        ('cap',   'Capacidade do Canal',  'Capacidade do Canal (Mbps)',   False),
+        ("power", "Potência Recebida", "Potência Recebida (dBW)", True),
+        ("sinr", "SINR", "SINR (dB)", True),
+        ("cap", "Capacidade do Canal", "Capacidade do Canal (Mbps)", False),
     ]
 
     for row, load in enumerate(load_labels):
         for col, (key, title, xlabel, to_db) in enumerate(kpi_specs):
             ax = axes[row, col]
             for model in models:
-                data = np.asarray(
-                    resultados_por_carga[model][load][key]
-                ).flatten()
+                data = np.asarray(resultados_por_carga[model][load][key]).flatten()
                 if to_db:
                     data = 10 * np.log10(data)
                 data = np.sort(data)
                 percentis = np.linspace(0, 1, len(data))
-                ax.plot(data, percentis,
-                        label=MODEL_LABELS.get(model, model),
-                        color=MODEL_COLORS.get(model))
+                ax.plot(
+                    data,
+                    percentis,
+                    label=MODEL_LABELS.get(model, model),
+                    color=MODEL_COLORS.get(model),
+                )
 
-            ax.axhline(y=0.10, color='r', linewidth=0.7, linestyle='--',
-                       label='10th Percentil')
-            ax.axhline(y=0.50, color='k', linewidth=0.7, linestyle='--',
-                       label='50th Percentil')
-            ax.set_title(f'CDF {title} ({load})')
+            ax.axhline(
+                y=0.10, color="r", linewidth=0.7, linestyle="--", label="10th Percentil"
+            )
+            ax.axhline(
+                y=0.50, color="k", linewidth=0.7, linestyle="--", label="50th Percentil"
+            )
+            ax.set_title(f"CDF {title} ({load})")
             ax.set_xlabel(xlabel)
-            ax.set_ylabel('Percentil')
+            ax.set_ylabel("Percentil")
             ax.legend(fontsize=8)
             ax.grid(True)
 
@@ -263,8 +336,8 @@ def plot_all_cdfs(resultados_por_carga: dict, load_labels: list,
 # Comparação de KPIs entre modelos (Remark 2)
 # ---------------------------------------------------------------------------
 
-def compare_kpis(resultados: dict, load_labels: list,
-                 models: list = None) -> None:
+
+def compare_kpis(resultados: dict, load_labels: list, models: list = None) -> None:
     """
     Compara SINR (10th pct, ganho em dB vs omni) e capacidade
     (10th pct e soma-capacidade, normalizados pelo omni) para cada cenário.
@@ -273,41 +346,41 @@ def compare_kpis(resultados: dict, load_labels: list,
         models = list(resultados.keys())
 
     labels = [
-        MODEL_LABELS.get(m, m) + (' (baseline)' if m == 'omni' else '')
-        for m in models
+        MODEL_LABELS.get(m, m) + (" (baseline)" if m == "omni" else "") for m in models
     ]
     colors = [MODEL_COLORS.get(m) for m in models]
 
-    fig, axes = plt.subplots(2, len(load_labels),
-                              figsize=(6 * len(load_labels), 9))
+    fig, axes = plt.subplots(2, len(load_labels), figsize=(6 * len(load_labels), 9))
     if len(load_labels) == 1:
         axes = axes.reshape(2, 1)
 
     for col, load in enumerate(load_labels):
         # SINR 10th percentil — diferença em dB em relação ao omni
         base_sinr_db = 10 * np.log10(
-            np.percentile(np.asarray(resultados['omni'][load]['sinr']).flatten(), 10)
+            np.percentile(np.asarray(resultados["omni"][load]["sinr"]).flatten(), 10)
         )
         sinr_db = [
-            10 * np.log10(
-                np.percentile(np.asarray(resultados[m][load]['sinr']).flatten(), 10)
-            ) - base_sinr_db
+            10
+            * np.log10(
+                np.percentile(np.asarray(resultados[m][load]["sinr"]).flatten(), 10)
+            )
+            - base_sinr_db
             for m in models
         ]
         ax_sinr = axes[0, col]
         ax_sinr.bar(labels, sinr_db, color=colors)
-        ax_sinr.set_title(f'Ganho de SINR 10th pct ({load})')
-        ax_sinr.set_ylabel('Ganho vs Omni (dB)')
-        ax_sinr.axhline(y=0, color='k', linewidth=0.8, linestyle='--')
-        ax_sinr.grid(True, axis='y')
-        ax_sinr.tick_params(axis='x', rotation=15)
+        ax_sinr.set_title(f"Ganho de SINR 10th pct ({load})")
+        ax_sinr.set_ylabel("Ganho vs Omni (dB)")
+        ax_sinr.axhline(y=0, color="k", linewidth=0.8, linestyle="--")
+        ax_sinr.grid(True, axis="y")
+        ax_sinr.tick_params(axis="x", rotation=15)
 
         # Capacidade normalizada
-        base = resultados['omni'][load]
-        cap_base = np.percentile(np.asarray(base['cap']).flatten(), 10)
-        sumcap_base = base['sum_cap']
+        base = resultados["omni"][load]
+        cap_base = np.percentile(np.asarray(base["cap"]).flatten(), 10)
+        sumcap_base = base["sum_cap"]
 
-        metrics = ['Capacidade (10th pct)', 'Soma-capacidade média']
+        metrics = ["Capacidade (10th pct)", "Soma-capacidade média"]
         x = np.arange(len(metrics))
         width = 0.8 / len(models)
 
@@ -315,19 +388,18 @@ def compare_kpis(resultados: dict, load_labels: list,
         for idx, m in enumerate(models):
             res = resultados[m][load]
             vals = [
-                np.percentile(np.asarray(res['cap']).flatten(), 10) / cap_base,
-                res['sum_cap'] / sumcap_base,
+                np.percentile(np.asarray(res["cap"]).flatten(), 10) / cap_base,
+                res["sum_cap"] / sumcap_base,
             ]
             offset = (idx - (len(models) - 1) / 2) * width
-            ax.bar(x + offset, vals, width,
-                   label=labels[idx], color=colors[idx])
+            ax.bar(x + offset, vals, width, label=labels[idx], color=colors[idx])
 
         ax.set_xticks(x)
         ax.set_xticklabels(metrics, rotation=15)
-        ax.set_title(f'Capacidade normalizada ({load})')
-        ax.axhline(y=1.0, color='k', linewidth=0.8, linestyle='--')
+        ax.set_title(f"Capacidade normalizada ({load})")
+        ax.axhline(y=1.0, color="k", linewidth=0.8, linestyle="--")
         ax.legend()
-        ax.grid(True, axis='y')
+        ax.grid(True, axis="y")
 
     plt.tight_layout()
     plt.show()
@@ -337,8 +409,12 @@ def compare_kpis(resultados: dict, load_labels: list,
 # Padrões polares SMB
 # ---------------------------------------------------------------------------
 
-def plot_padroes_smb(configs: list = ((8, 4), (8, 16), (4, 8), (16, 8)),
-                     savepath: str = None, show: bool = True):
+
+def plot_padroes_smb(
+    configs: list = ((8, 4), (8, 16), (4, 8), (16, 8)),
+    savepath: str = None,
+    show: bool = True,
+):
     """
     Padrões de antena SMB em coordenadas polares para várias combinações (L, J),
     como na Fig. 9 do roteiro. O círculo externo corresponde ao ganho de pico G = L.
@@ -346,8 +422,13 @@ def plot_padroes_smb(configs: list = ((8, 4), (8, 16), (4, 8), (16, 8)),
     n = len(configs)
     cols = 2 if n > 1 else 1
     rows = int(np.ceil(n / cols))
-    fig, axes = plt.subplots(rows, cols, subplot_kw={'projection': 'polar'},
-                              figsize=(5 * cols, 5 * rows), squeeze=False)
+    fig, axes = plt.subplots(
+        rows,
+        cols,
+        subplot_kw={"projection": "polar"},
+        figsize=(5 * cols, 5 * rows),
+        squeeze=False,
+    )
     th = np.linspace(0, 2 * np.pi, 1000)
 
     for ax, (L_, J_) in zip(axes.ravel(), configs):
@@ -356,8 +437,8 @@ def plot_padroes_smb(configs: list = ((8, 4), (8, 16), (4, 8), (16, 8)),
             ax.plot(th, g[:, k], color=plt.cm.hsv(k / J_), lw=1.6)
         ax.set_ylim(0, L_)
         ax.set_yticks([L_ / 2, L_])
-        ax.set_yticklabels([f'{L_/2:g}', f'{L_}'], fontsize=7)
-        ax.set_title(f'L={L_}, J={J_}  (G = {L_})', fontsize=10)
+        ax.set_yticklabels([f"{L_ / 2:g}", f"{L_}"], fontsize=7)
+        ax.set_title(f"L={L_}, J={J_}  (G = {L_})", fontsize=10)
 
     for ax in axes.ravel()[n:]:
         ax.set_visible(False)
@@ -368,3 +449,81 @@ def plot_padroes_smb(configs: list = ((8, 4), (8, 16), (4, 8), (16, 8)),
     if show:
         plt.show()
     return fig
+
+
+# ---------------------------------------------------------------------------
+# Gráficos Específicos para Relatório
+# ---------------------------------------------------------------------------
+
+
+def plot_scichal4a_kpis(
+    resultados_consolidados: dict,
+    K_scenarios: list,
+    models: list,
+    title: str = "Joint MRC & Dual-Loop PC",
+):
+    """
+    Gera o painel 2x2 com Border SE, Sum-Capacity SE, Eficiência Energética e Taxa de Outage.
+    """
+    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+    fig.suptitle(f"Comparativo de KPIs — {title}", fontsize=14, fontweight="bold")
+
+    kpi_configs = [
+        (
+            "border_se",
+            "1. Border Spectrum Efficiency (10º Pct)",
+            "SE [bps/Hz]",
+            axes[0, 0],
+            False,
+        ),
+        ("sum_se", "2. Sum-Capacity SE (Média)", "SE Soma [bps/Hz]", axes[0, 1], False),
+        (
+            "energy_eff",
+            "3. Energy Efficiency (Log)",
+            "Eficiência [Mbits/Joule]",
+            axes[1, 0],
+            True,
+        ),
+        ("outage_rate", "4. Taxa de Outage", "Outage [%]", axes[1, 1], False),
+    ]
+
+    x = np.arange(len(K_scenarios))
+    width = 0.25
+
+    for kpi_key, subplot_title, ylabel, ax, use_log in kpi_configs:
+        for idx, model in enumerate(models):
+            vals = [resultados_consolidados[model][K][kpi_key] for K in K_scenarios]
+            offset = (idx - 1) * width
+            label_name = MODEL_LABELS.get(model, model)
+            color = MODEL_COLORS.get(model, "tab:gray")
+
+            rects = ax.bar(
+                x + offset, vals, width, label=label_name, color=color, alpha=0.85
+            )
+
+            # Anota os valores no topo das barras
+            for rect in rects:
+                h = rect.get_height()
+                if h > 0:
+                    ax.annotate(
+                        f"{h:.2f}",
+                        xy=(rect.get_x() + rect.get_width() / 2, h),
+                        xytext=(0, 3),
+                        textcoords="offset points",
+                        ha="center",
+                        va="bottom",
+                        fontsize=8,
+                        fontweight="bold",
+                    )
+
+        ax.set_title(subplot_title, fontweight="bold")
+        ax.set_xticks(x)
+        ax.set_xticklabels([f"K={K} UEs" for K in K_scenarios])
+        ax.set_ylabel(ylabel)
+        if use_log:
+            ax.set_yscale("log")
+        ax.grid(True, axis="y", linestyle="--", alpha=0.4)
+        ax.legend(fontsize=9)
+
+    plt.tight_layout()
+    plt.show()

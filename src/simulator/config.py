@@ -27,6 +27,7 @@ GAMMA_MIN_DB = -10.0  # Limiar de Outage / Bloqueio = -10 dB
 _LAMBDA: float = 1.0
 
 # Rótulos legíveis e cores para cada modelo de antena nos gráficos
+# Rótulos legíveis e cores para cada modelo nos gráficos
 MODEL_LABELS: dict = {
     "omni": "Omni",
     "sector": "Setorizado",
@@ -35,6 +36,10 @@ MODEL_LABELS: dict = {
     "adaptive_1": "Adaptativo (Erro 1°)",
     "adaptive_5": "Adaptativo (Erro 5°)",
     "adaptive_10": "Adaptativo (Erro 10°)",
+    # --- (Controle de Potência) ---
+    "full_power": "Full Power (1W)",
+    "dpc_fixed": "DPC Fixo (Meta 10 dB)",
+    "dual_loop": "Dual-Loop PC (Outage)",
 }
 
 MODEL_COLORS: dict = {
@@ -45,4 +50,8 @@ MODEL_COLORS: dict = {
     "adaptive_1": "tab:purple",
     "adaptive_5": "tab:brown",
     "adaptive_10": "tab:pink",
+    # ---
+    "full_power": "tab:gray",
+    "dpc_fixed": "tab:blue",
+    "dual_loop": "tab:orange",
 }
