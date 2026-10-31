@@ -1,0 +1,8 @@
+# Ambientes Virtuais
+venv/
+.venv/
+env/
+
+# Figuras geradas pelo simulador (mantém a pasta no Git)
+figures/*
+!figures/.gitkeep

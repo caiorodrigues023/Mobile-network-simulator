@@ -9,14 +9,19 @@ from .entities import AP, UE
 from .antennas import smb_gains, mrc_gain, antenna_gain
 from .channel import angle_matrix, gerar_shadowing, gain_matrix, adaptive_gains
 from .allocation import attach_AP_UE, alocar_canais_ortogonal, DPC
-from .metrics import SINR, SINR_adaptive, channel_capacity
+from .metrics import SINR, SINR_adaptive, channel_capacity, tabela_kpis
 from .runner import distribuir_AP, cenario_aleatorio, simular_experimento
+from .mobility import simular_trajetoria, estudo_mobilidade
 from .visualization import (
     plotar_mapa,
     plot_cdfs,
     plot_all_cdfs,
     compare_kpis,
     plot_padroes_smb,
+    plot_ganho_vs_tempo,
+    plot_perda_desalinhamento,
+    plot_perda_por_arranjo,
+    plot_tradeoff_se,
 )
 
 __all__ = [
@@ -31,10 +36,13 @@ __all__ = [
     # allocation
     'attach_AP_UE', 'alocar_canais_ortogonal', 'DPC',
     # metrics
-    'SINR', 'SINR_adaptive', 'channel_capacity',
+    'SINR', 'SINR_adaptive', 'channel_capacity', 'tabela_kpis',
     # runner
     'distribuir_AP', 'cenario_aleatorio', 'simular_experimento',
+    # mobility
+    'simular_trajetoria', 'estudo_mobilidade',
     # visualization
     'plotar_mapa', 'plot_cdfs', 'plot_all_cdfs', 'compare_kpis',
-    'plot_padroes_smb',
+    'plot_padroes_smb', 'plot_ganho_vs_tempo', 'plot_perda_desalinhamento',
+    'plot_perda_por_arranjo', 'plot_tradeoff_se',
 ]

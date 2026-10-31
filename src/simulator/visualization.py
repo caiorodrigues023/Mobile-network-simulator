@@ -7,11 +7,27 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Wedge, Circle
 from matplotlib.lines import Line2D
 
-from .config import MODEL_LABELS, MODEL_COLORS
+from pathlib import Path
+
+from .config import MODEL_LABELS, MODEL_COLORS, FIGURES_DIR
 from .antennas import antenna_gain, smb_gains, mrc_gain
 from .channel import gerar_shadowing, gain_matrix, adaptive_gains
 from .allocation import attach_AP_UE
 from .metrics import SINR, SINR_adaptive
+from .mobility import PERIODOS_MS, ARRANJOS_L
+
+
+def _salvar(fig, savepath) -> Path:
+    """
+    Salva a figura em 'savepath'. Caminhos relativos são resolvidos a partir de
+    config.FIGURES_DIR (subpastas são criadas); caminhos absolutos são respeitados.
+    """
+    p = Path(savepath)
+    if not p.is_absolute():
+        p = FIGURES_DIR / p
+    p.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(p, dpi=150)
+    return p
 
 
 # ---------------------------------------------------------------------------
@@ -159,7 +175,7 @@ def plotar_mapa(aps: list, ues: list, shadowing: np.ndarray = None,
     plt.tight_layout(rect=(0, 0.04, 1, 1))
 
     if savepath:
-        fig.savefig(savepath, dpi=150)
+        _salvar(fig, savepath)
     if show:
         plt.show()
 
@@ -364,7 +380,123 @@ def plot_padroes_smb(configs: list = ((8, 4), (8, 16), (4, 8), (16, 8)),
 
     plt.tight_layout()
     if savepath:
-        fig.savefig(savepath, dpi=150)
+        _salvar(fig, savepath)
     if show:
         plt.show()
     return fig
+
+
+# ---------------------------------------------------------------------------
+# Mobilidade (beam tracking) — consome os resultados de mobility.estudo_mobilidade()
+# ---------------------------------------------------------------------------
+
+def _finish(fig, savepath: str = None, show: bool = True):
+    plt.tight_layout()
+    if savepath:
+        _salvar(fig, savepath)
+    if show:
+        plt.show()
+    return fig
+
+
+def plot_ganho_vs_tempo(res: dict, L: int = 16, d_perp: float = 100.0,
+                        periodos: tuple = PERIODOS_MS, janela_ms: float = None,
+                        savepath: str = None, show: bool = True):
+    """
+    Array Gain (dB) vs tempo: uma linha de gráficos por velocidade, uma curva
+    por T. A linha tracejada é o ganho ideal (10·log10 L).
+    Use 'janela_ms' (ex.: 400) para dar zoom ao redor do broadside.
+    """
+    nomes = list(dict.fromkeys(k[0] for k in res))
+    fig, axes = plt.subplots(len(nomes), 1, figsize=(11, 3.2 * len(nomes)),
+                             sharex=True, squeeze=False)
+    for ax, nome in zip(axes[:, 0], nomes):
+        for T in periodos:
+            r = res[(nome, T, L, d_perp)]
+            ax.plot(r['t_ms'], r['gain_db'], lw=1.2, label=f'T = {T} ms')
+        ax.axhline(10 * np.log10(L), color='k', ls='--', lw=0.8,
+                   label=f'Ideal ({10 * np.log10(L):.1f} dB)')
+        ax.set_ylim(10 * np.log10(L) - 25, 10 * np.log10(L) + 1)
+        ax.set_ylabel('Ganho de arranjo (dB)')
+        ax.set_title(f'{nome} — L={L}, d⊥={d_perp:.0f} m')
+        ax.grid(True, alpha=0.4)
+        ax.legend(fontsize=8, ncol=4, loc='lower center')
+        if janela_ms:
+            c = r['t_ms'][-1] / 2
+            ax.set_xlim(c - janela_ms / 2, c + janela_ms / 2)
+    axes[-1, 0].set_xlabel('Tempo (ms)')
+    return _finish(fig, savepath, show)
+
+
+def plot_perda_desalinhamento(res: dict, L: int = 16, d_perp: float = 100.0,
+                              periodos: tuple = PERIODOS_MS,
+                              janela_ms: float = None,
+                              savepath: str = None, show: bool = True):
+    """Beam Misalignment Loss (dB) = ganho ideal − ganho real, vs tempo."""
+    nomes = list(dict.fromkeys(k[0] for k in res))
+    fig, axes = plt.subplots(len(nomes), 1, figsize=(11, 3.2 * len(nomes)),
+                             sharex=True, squeeze=False)
+    for ax, nome in zip(axes[:, 0], nomes):
+        for T in periodos:
+            r = res[(nome, T, L, d_perp)]
+            ax.plot(r['t_ms'], r['loss_db'], lw=1.2,
+                    label=f"T = {T} ms (média {r['loss_medio_db']:.1f} dB)")
+        ax.set_ylabel('Perda de desalinhamento (dB)')
+        ax.set_title(f'{nome} — L={L}, d⊥={d_perp:.0f} m')
+        ax.set_ylim(bottom=0, top=25)
+        ax.grid(True, alpha=0.4)
+        ax.legend(fontsize=8, ncol=3, loc='upper center')
+        if janela_ms:
+            c = r['t_ms'][-1] / 2
+            ax.set_xlim(c - janela_ms / 2, c + janela_ms / 2)
+    axes[-1, 0].set_xlabel('Tempo (ms)')
+    return _finish(fig, savepath, show)
+
+
+def plot_perda_por_arranjo(res: dict, d_perp: float = 100.0,
+                           periodos: tuple = PERIODOS_MS,
+                           arranjos: tuple = ARRANJOS_L,
+                           savepath: str = None, show: bool = True):
+    """Perda média de desalinhamento (dB) vs T, uma curva por L, por mobilidade."""
+    nomes = list(dict.fromkeys(k[0] for k in res))
+    fig, axes = plt.subplots(1, len(nomes), figsize=(5 * len(nomes), 4),
+                             squeeze=False)
+    for ax, nome in zip(axes[0], nomes):
+        for L in arranjos:
+            ax.plot(periodos,
+                    [res[(nome, T, L, d_perp)]['loss_medio_db']
+                     for T in periodos], 'o-', label=f'L = {L}')
+        ax.set_xlabel('Período de atualização T (ms)')
+        ax.set_ylabel('Perda média (dB)')
+        ax.set_title(f'{nome}, d⊥={d_perp:.0f} m')
+        ax.grid(True, alpha=0.4)
+        ax.legend()
+    return _finish(fig, savepath, show)
+
+
+def plot_tradeoff_se(res: dict, d_perp: float = 100.0,
+                     periodos: tuple = PERIODOS_MS, arranjos: tuple = ARRANJOS_L,
+                     savepath: str = None, show: bool = True):
+    """
+    Trade-off taxa de atualização × eficiência espectral.
+    Linhas cheias: SE líquida (descontado o overhead t_pilot/T).
+    Tracejadas: SE bruta (sem overhead).
+    """
+    nomes = list(dict.fromkeys(k[0] for k in res))
+    fig, axes = plt.subplots(1, len(nomes), figsize=(5 * len(nomes), 4.2),
+                             squeeze=False)
+    for ax, nome in zip(axes[0], nomes):
+        for i, L in enumerate(arranjos):
+            c = f'C{i}'
+            ax.plot(periodos, [res[(nome, T, L, d_perp)]['se_net_medio']
+                               for T in periodos], 'o-', color=c,
+                    label=f'L={L} líquida')
+            ax.plot(periodos, [res[(nome, T, L, d_perp)]['se_gross_medio']
+                               for T in periodos], 's--', color=c, alpha=0.5,
+                    label=f'L={L} bruta')
+        ax.set_xlabel('Período de atualização T (ms)')
+        ax.set_ylabel('Eficiência espectral C/B (bit/s/Hz)')
+        ax.set_title(f'{nome}, d⊥={d_perp:.0f} m')
+        ax.grid(True, alpha=0.4)
+        ax.legend(fontsize=7)
+    return _finish(fig, savepath, show)

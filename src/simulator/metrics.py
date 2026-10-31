@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------------------
-# metrics.py — SINR (estático e adaptativo) e Capacidade de Shannon
+# metrics.py — SINR (estático e adaptativo), Capacidade de Shannon e KPIs
 # ---------------------------------------------------------------------------
 
 import numpy as np
@@ -97,3 +97,19 @@ def channel_capacity(sinr_valores: list, N: int) -> np.ndarray:
     B_per_channel = _BT / N
     sinr_array = np.asarray(sinr_valores)
     return B_per_channel * np.log2(1 + sinr_array) / 1e6
+
+
+def tabela_kpis(res: dict) -> None:
+    """
+    Imprime os KPIs médios de cada cenário de mobilidade.
+
+    res : saída de mobility.estudo_mobilidade(),
+          {(nome_vel, T_ms, L, d_perp): resultado_de_simular_trajetoria}.
+    """
+    print(f"{'Mobilidade':20s} {'T(ms)':>6s} {'L':>3s} {'d(m)':>6s} "
+          f"{'Perda(dB)':>10s} {'Pico(dB)':>9s} {'SE bruta':>9s} "
+          f"{'SE líq.':>8s}")
+    for (nome, T, L, d), r in res.items():
+        print(f"{nome:20s} {T:6.0f} {L:3d} {d:6.0f} "
+              f"{r['loss_medio_db']:10.2f} {r['loss_max_db']:9.2f} "
+              f"{r['se_gross_medio']:9.3f} {r['se_net_medio']:8.3f}")

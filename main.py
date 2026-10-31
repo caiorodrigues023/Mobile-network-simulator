@@ -2,7 +2,8 @@
 main.py — Ponto de entrada do simulador de redes móveis.
 
 Executa um experimento de Monte Carlo rápido (para validação) e, opcionalmente,
-plota o mapa do cenário e as CDFs dos KPIs.
+plota o mapa do cenário e as CDFs dos KPIs. Também pode rodar o estudo de
+mobilidade (beam tracking) ativando RUN_MOBILITY.
 
 Para uma simulação completa com comparação entre cargas, consulte o ARCHITECTURE.md.
 """
@@ -17,6 +18,12 @@ from simulator import (
     plotar_mapa,
     plot_all_cdfs,
     compare_kpis,
+    estudo_mobilidade,
+    tabela_kpis,
+    plot_ganho_vs_tempo,
+    plot_perda_desalinhamento,
+    plot_perda_por_arranjo,
+    plot_tradeoff_se,
 )
 
 # ---------------------------------------------------------------------------
@@ -28,6 +35,8 @@ SIM = 5       # iterações de Monte Carlo (aumente para resultados estatístico
 
 ANTENNA_MODELS = ('omni', 'sector', 'smb')
 LOAD_CONFIGS   = {'K=1': 1, 'K=4': 4}   # label → nº de UEs
+
+RUN_MOBILITY = True    # True → executa o estudo de mobilidade (Cap. 2)
 
 # ---------------------------------------------------------------------------
 # Experimento Monte Carlo por cenário de carga
@@ -61,6 +70,20 @@ for label in LOAD_CONFIGS:
         print(f"  {model:12s}  SINR 10th={sinr_p10:+.1f} dB  "
               f"Cap 10th={cap_p10:.2f} Mbps  SumCap={sum_cap:.2f} Mbps")
     print()
+
+# ---------------------------------------------------------------------------
+# Estudo de mobilidade: lag de beam tracking (velocidade × T × L × distância)
+# ---------------------------------------------------------------------------
+if RUN_MOBILITY:
+    print("=== Estudo de Mobilidade ===\n")
+    res_mob = estudo_mobilidade(seed=42)
+    tabela_kpis(res_mob)
+    plot_ganho_vs_tempo(res_mob, L=32, d_perp=25, janela_ms=600,
+                        savepath='mobilidade/ganho_vs_tempo.png', show=False)
+    plot_perda_desalinhamento(res_mob, L=32, d_perp=25, janela_ms=600,
+                              savepath='mobilidade/perda_desalinhamento.png', show=False)
+    plot_perda_por_arranjo(res_mob, savepath='mobilidade/perda_por_arranjo.png', show=False)
+    plot_tradeoff_se(res_mob, savepath='mobilidade/tradeoff_se.png', show=False)
 
 # ---------------------------------------------------------------------------
 # Gráficos (descomente para exibir / salvar)

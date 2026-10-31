@@ -1,7 +1,7 @@
 # 📡 Mobile Network Simulator
 
 Simulador de redes móveis celulares desenvolvido no **GTEL – Grupo de Telecomunicações (UFC)**.
-Compara o desempenho de quatro tecnologias de antena — **Omnidirecional, Setorial, SMB** (*Switched Multi-Beam*) e **MRC Adaptativo** — por meio de simulações de Monte Carlo.
+Compara o desempenho de quatro tecnologias de antena — **Omnidirecional, Setorial, SMB** (*Switched Multi-Beam*) e **MRC Adaptativo** — por meio de simulações de Monte Carlo, e avalia o impacto da **mobilidade** do UE no beamforming adaptativo.
 
 ---
 
@@ -19,7 +19,10 @@ mobile-network-simulator/
 │       ├── allocation.py      # Attach UE↔AP, alocação de canais e DPC
 │       ├── metrics.py         # SINR, SINR_adaptive, capacidade de Shannon
 │       ├── runner.py          # Motor Monte Carlo e posicionamento de APs
-│       └── visualization.py   # Mapas 2D, CDFs e gráficos de KPI
+│       ├── mobility.py        # Simulação de mobilidade (beam tracking)
+│       └── visualization.py   # Mapas 2D, CDFs, KPIs e gráficos de mobilidade
+├── figures/                   # Imagens geradas (ignoradas pelo Git)
+│   └── mobilidade/            # Gráficos do estudo de mobilidade
 ├── pyproject.toml             # Configuração do pacote (pip install -e .)
 ├── main.py                    # Ponto de entrada do simulador
 ├── scichal.py                 # Código original (referência)
@@ -98,7 +101,48 @@ aps, ues, shadowing = cenario_aleatorio(M=M, K=4, seed=42)
 plotar_mapa(aps, ues, shadowing=shadowing, models=list(ANTENNA_MODELS), show=True)
 ```
 
-### 4. Usar como biblioteca em um notebook ou script próprio
+### Onde ficam as figuras
+
+Todo `savepath` relativo passado às funções `plot_*` / `plotar_mapa` é salvo dentro de `figures/` (pasta definida por `FIGURES_DIR` em `config.py`, criada automaticamente, subpastas inclusive). Ex.: `plotar_mapa(..., savepath='mapas/cenario1.png')` → `figures/mapas/cenario1.png`. Caminhos absolutos são respeitados.
+
+### 4. Simulação de mobilidade (beam tracking)
+
+Um UE cruza a célula tangencialmente ao broadside do arranjo; o AP atualiza os pesos MRC a cada `T` ms e o UE se move entre atualizações, gerando o erro total
+$\varphi_{total} = \varepsilon_{est} + \varphi_{lag}(v, T)$.
+
+Pelo `main.py`, com `RUN_MOBILITY = True` (salva em `figures/mobilidade/`: `ganho_vs_tempo.png`, `perda_desalinhamento.png`, `perda_por_arranjo.png` e `tradeoff_se.png`). Uso como biblioteca:
+
+```python
+from simulator import (
+    simular_trajetoria, estudo_mobilidade, tabela_kpis,
+    plot_ganho_vs_tempo, plot_perda_desalinhamento,
+    plot_perda_por_arranjo, plot_tradeoff_se,
+)
+
+# Um cenário: 120 km/h, a 25 m do AP, T=50 ms, L=32
+r = simular_trajetoria(v_kmh=120, d_perp=25, T_ms=50, L=32, seed=42)
+print(r['loss_medio_db'], r['se_net_medio'])
+
+# Grid completo (velocidade × T × L × distância)
+res = estudo_mobilidade(seed=42)
+tabela_kpis(res)
+plot_ganho_vs_tempo(res, L=16, d_perp=100, janela_ms=600)
+plot_perda_desalinhamento(res, L=16, d_perp=100, janela_ms=600)
+plot_tradeoff_se(res, d_perp=100)
+```
+
+| Parâmetro | Padrão | Descrição |
+|---|---|---|
+| `v_kmh` | 3 / 50 / 120 | Velocidade do UE (pedestre / urbano / rodovia) |
+| `T_ms` | 100 / 50 / 10 | Período de atualização dos pesos MRC |
+| `L` | 8 / 16 / 32 | Elementos do arranjo |
+| `d_perp` | 25 / 100 / 250 m | Distância perpendicular da trajetória ao AP |
+| `dt_ms` | 1 | Passo de simulação |
+| `sigma_est_deg` | 1 | Desvio-padrão do erro de estimação de AoA |
+| `t_pilot_ms` | 0,5 | Tempo de treino por atualização (overhead = `t_pilot/T`) |
+| `seed` | 0 | Semente reiniciada a cada cenário (mesmas realizações) |
+
+### 5. Usar como biblioteca em um notebook ou script próprio
 
 O pacote pode ser importado diretamente após o `pip install -e .`:
 
@@ -142,7 +186,7 @@ plot_all_cdfs(resultados_por_carga, ['K=8'])
 plot_padroes_smb(configs=[(8, 8), (8, 16), (16, 8)])
 ```
 
-### 5. Guia rápido de funções públicas
+### 6. Guia rápido de funções públicas
 
 | Função | Módulo | Descrição |
 |---|---|---|
@@ -156,6 +200,13 @@ plot_padroes_smb(configs=[(8, 8), (8, 16), (16, 8)])
 | `SINR()` | `metrics` | SINR para antenas convencionais |
 | `SINR_adaptive()` | `metrics` | SINR com beamforming MRC |
 | `channel_capacity()` | `metrics` | Capacidade de Shannon em Mbps |
+| `simular_trajetoria()` | `mobility` | Um UE cruzando a célula: ganho, perda e SE no tempo |
+| `estudo_mobilidade()` | `mobility` | Grid velocidade × T × L × distância |
+| `tabela_kpis()` | `metrics` | Tabela de KPIs médios por cenário |
+| `plot_ganho_vs_tempo()` | `visualization` | Array Gain × tempo |
+| `plot_perda_desalinhamento()` | `visualization` | Beam Misalignment Loss × tempo |
+| `plot_perda_por_arranjo()` | `visualization` | Perda média × T para cada L |
+| `plot_tradeoff_se()` | `visualization` | SE líquida × período de atualização |
 | `plotar_mapa()` | `visualization` | Mapa 2D com UEs, APs e feixes |
 | `plot_all_cdfs()` | `visualization` | CDFs de potência, SINR e capacidade |
 | `compare_kpis()` | `visualization` | Barras comparativas entre modelos |
@@ -181,6 +232,7 @@ $$G_k(\varphi) = \left| \mathbf{w}_k^T \mathbf{a}(\varphi) \right|^2, \quad \mat
 Beamforming em tempo real: o feixe é formado exatamente na direção do UE.
 O sufixo numérico indica o desvio-padrão do erro de estimativa de AoA em graus
 (ex.: `adaptive_5` → erro gaussiano $\sigma = 5°$).
+Na simulação de mobilidade, o feixe é atualizado apenas a cada `T` ms (ver seção 4).
 
 ---
 
@@ -226,7 +278,8 @@ git push origin feature/modelo-canal-3gpp
 | Nova política de alocação de canal ou potência | `src/simulator/allocation.py` |
 | Nova métrica de desempenho | `src/simulator/metrics.py` |
 | Novo tipo de experimento ou topologia de rede | `src/simulator/runner.py` |
-| Novo tipo de gráfico ou mapa | `src/simulator/visualization.py` |
+| Novo cenário de mobilidade, perfil de velocidade ou política de tracking | `src/simulator/mobility.py` |
+| Novo tipo de gráfico ou mapa (inclusive de mobilidade) | `src/simulator/visualization.py` |
 
 ### Adicionando um novo modelo de antena
 
@@ -275,6 +328,7 @@ resultados[model]['minha_metrica'].append(minha_metrica(ues, ...))
 ```
 
 - Ao comparar modelos, **use o mesmo shadowing** pré-sorteado para garantir condições justas.
+- Ao comparar cenários de mobilidade, **reinicie a semente** antes de cada cenário (já feito em `simular_trajetoria()`).
 
 ## Licença
 
