@@ -21,7 +21,7 @@ def run_experiment():
     # Parâmetros do sistema
     M = 16
     N = 1
-    SIM = 100  # 10 mil snapshots Monte Carlo!
+    SIM = 10000  # 10 mil snapshots Monte Carlo!
     K_scenarios = [1, 4, 8]
 
     # Algoritmos mapeados no seu simular_scichal4a_vetorizado
