@@ -7,27 +7,30 @@ plota o mapa do cenário e as CDFs dos KPIs.
 Para uma simulação completa com comparação entre cargas, consulte o ARCHITECTURE.md.
 """
 
-import matplotlib
-matplotlib.use('Agg')  # backend sem janela — remove esta linha para exibir gráficos interativos
+
+# matplotlib.use(
+#     "Agg"
+# )  # backend sem janela — remove esta linha para exibir gráficos interativos
 
 import numpy as np
-from simulator import (
-    simular_experimento,
+
+from src.simulator import (
     cenario_aleatorio,
-    plotar_mapa,
-    plot_all_cdfs,
     compare_kpis,
+    plot_all_cdfs,
+    plotar_mapa,
+    simular_experimento,
 )
 
 # ---------------------------------------------------------------------------
 # Parâmetros do experimento
 # ---------------------------------------------------------------------------
-M   = 4       # número de APs (deve ser quadrado perfeito: 4, 9, 16 …)
-N   = 4       # canais ortogonais
-SIM = 5       # iterações de Monte Carlo (aumente para resultados estatísticos)
+M = 4  # número de APs (deve ser quadrado perfeito: 4, 9, 16 …)
+N = 1  # canais ortogonais
+SIM = 1000  # iterações de Monte Carlo (aumente para resultados estatísticos)
 
-ANTENNA_MODELS = ('omni', 'sector', 'smb')
-LOAD_CONFIGS   = {'K=1': 1, 'K=4': 4}   # label → nº de UEs
+ANTENNA_MODELS = ("omni", "sector", "smb")
+LOAD_CONFIGS = {"K=1": 1, "K=4": 4}  # label → nº de UEs
 
 # ---------------------------------------------------------------------------
 # Experimento Monte Carlo por cenário de carga
@@ -39,8 +42,11 @@ resultados_por_carga: dict = {model: {} for model in ANTENNA_MODELS}
 for label, K in LOAD_CONFIGS.items():
     print(f"[{label}] Simulando {SIM} iterações com M={M} APs, N={N} canais …")
     res = simular_experimento(
-        M=M, N=N, K=K, sim=SIM,
-        allocation='ortogonal',
+        M=M,
+        N=N,
+        K=K,
+        sim=SIM,
+        allocation="ortogonal",
         antenna_models=ANTENNA_MODELS,
     )
     for model in ANTENNA_MODELS:
@@ -55,19 +61,25 @@ for label in LOAD_CONFIGS:
     print(f"--- {label} ---")
     for model in ANTENNA_MODELS:
         r = resultados_por_carga[model][label]
-        sinr_p10 = 10 * np.log10(np.percentile(r['sinr'], 10))
-        cap_p10  = np.percentile(r['cap'], 10)
-        sum_cap  = r['sum_cap']
-        print(f"  {model:12s}  SINR 10th={sinr_p10:+.1f} dB  "
-              f"Cap 10th={cap_p10:.2f} Mbps  SumCap={sum_cap:.2f} Mbps")
+        sinr_p10 = 10 * np.log10(np.percentile(r["sinr"], 10))
+        cap_p10 = np.percentile(r["cap"], 10)
+        sum_cap = r["sum_cap"]
+        print(
+            f"  {model:12s}  SINR 10th={sinr_p10:+.1f} dB  "
+            f"Cap 10th={cap_p10:.2f} Mbps  SumCap={sum_cap:.2f} Mbps"
+        )
     print()
 
 # ---------------------------------------------------------------------------
 # Gráficos (descomente para exibir / salvar)
 # ---------------------------------------------------------------------------
-# plot_all_cdfs(resultados_por_carga, list(LOAD_CONFIGS.keys()), models=list(ANTENNA_MODELS))
-# compare_kpis(resultados_por_carga, list(LOAD_CONFIGS.keys()), models=list(ANTENNA_MODELS))
+plot_all_cdfs(
+    resultados_por_carga, list(LOAD_CONFIGS.keys()), models=list(ANTENNA_MODELS)
+)
+compare_kpis(
+    resultados_por_carga, list(LOAD_CONFIGS.keys()), models=list(ANTENNA_MODELS)
+)
 
 # Mapa de um cenário representativo
-# aps, ues, shadowing = cenario_aleatorio(M=M, K=4, seed=42)
-# plotar_mapa(aps, ues, shadowing=shadowing, models=list(ANTENNA_MODELS), show=True)
+aps, ues, shadowing = cenario_aleatorio(M=M, K=4, seed=42)
+plotar_mapa(aps, ues, shadowing=shadowing, models=list(ANTENNA_MODELS), show=True)

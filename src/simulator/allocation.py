@@ -6,40 +6,43 @@ import random
 
 import numpy as np
 
-from .channel import angle
-
+from .config import (
+    GAMMA_MAX_DB,
+    GAMMA_MIN_DB,
+    MU_STEP,
+    P_MAX_DBM,
+    P_MIN_DBM,
+)
 
 # ---------------------------------------------------------------------------
 # Associação UE → AP (Initial Access)
 # ---------------------------------------------------------------------------
 
-def attach_AP_UE(ues: list, aps: list, gains: np.ndarray) -> None:
-    """
-    Initial access: cada UE se associa ao par (AP, setor/feixe) com o MAIOR
-    ganho de canal, entre as M × B combinações (B = nº de setores/feixes por AP:
-    1 no omni, 3 no setorizado, J no SMB).
 
-    Preenche em cada UE: ue.ap, ue.beam, ue.gain, ue.dist e ue.angle.
-    Adiciona cada UE à lista ue.ap.ues.
+def attach_AP_UE(gains: np.ndarray) -> tuple:
     """
-    for i, ue in enumerate(ues):
-        j, b = np.unravel_index(np.argmax(gains[i]), gains[i].shape)
-        ue.ap = aps[j]
-        ue.beam = int(b)
-        ue.gain = gains[i, j, b]
-        ue.dist = np.linalg.norm(
-            np.array([ue.x, ue.y]) - np.array([ue.ap.x, ue.ap.y])
-        )
-        ue.angle = angle(ue, ue.ap)
-        aps[j].ues.append(ue)
+    gains: matriz (K, M, B) de ganho total de canal.
+    Retorna:
+      - serving_ap: vetor (K,) com o índice do AP associado a cada UE.
+      - serving_beam: vetor (K,) com o índice do setor/feixe associado.
+    """
+    K = gains.shape[0]
+    # Encontra o índice linear do maior ganho para cada linha K
+    flat_indices = np.argmax(gains.reshape(K, -1), axis=1)
+
+    # Desempacota o índice linear para (M, B)
+    serving_ap, serving_beam = np.unravel_index(flat_indices, gains.shape[1:])
+    return serving_ap, serving_beam
 
 
 # ---------------------------------------------------------------------------
 # Alocação de canais ortogonais intra-célula
 # ---------------------------------------------------------------------------
 
-def alocar_canais_ortogonal(access_points: list, ues: list,
-                             number_channels: int, allocation: str) -> None:
+
+def alocar_canais_ortogonal(
+    access_points: list, ues: list, number_channels: int, allocation: str
+) -> None:
     """
     Aloca canais aos UEs de forma ortogonal dentro de cada célula (AP).
 
@@ -55,7 +58,7 @@ def alocar_canais_ortogonal(access_points: list, ues: list,
     for ue in ues:
         ue.channel = None
 
-    if allocation == 'random':
+    if allocation == "random":
         for ue in ues:
             ue.channel = np.random.randint(1, number_channels + 1)
         return
@@ -70,7 +73,7 @@ def alocar_canais_ortogonal(access_points: list, ues: list,
 
         for ue0 in ap.ues:
             if not available_channels:
-                break                          # mais UEs do que canais no AP
+                break  # mais UEs do que canais no AP
 
             channel = available_channels.pop()
             ues[ue0.id].channel = channel
@@ -88,8 +91,18 @@ def alocar_canais_ortogonal(access_points: list, ues: list,
 # Controle Distribuído de Potência (DPC)
 # ---------------------------------------------------------------------------
 
-def DPC(ues: list, N: int, t_max: int, G: np.ndarray, R: np.ndarray,
-        y_tar: float, p_min: float, p_max: float, p_init: float) -> np.ndarray:
+
+def DPC(
+    ues: list,
+    N: int,
+    t_max: int,
+    G: np.ndarray,
+    R: np.ndarray,
+    y_tar: float,
+    p_min: float,
+    p_max: float,
+    p_init: float,
+) -> np.ndarray:
     """
     Algoritmo de Controle Distribuído de Potência.
 
@@ -135,3 +148,72 @@ def DPC(ues: list, N: int, t_max: int, G: np.ndarray, R: np.ndarray,
                 break
 
     return p[:, 0:iteracoes]
+
+
+def DPC_Dual_Loop(
+    G_eff: np.ndarray,
+    P_n: float,
+    gamma_tar_db: np.ndarray,
+    ue_active: np.ndarray,
+    t_outer: int = 35,
+    t_inner: int = 15,
+    tol_db: float = 0.5,
+) -> tuple:
+    """
+    Joint MRC & Dual-Loop Power Control.
+    Utiliza as matrizes G (ganho antena) e R (ganho canal) extraídas dos UEs.
+    """
+    K = G_eff.shape[0]
+    P_dbm = np.full(K, P_MAX_DBM)
+
+    for outer in range(t_outer):
+        if not np.any(ue_active):
+            break
+
+        gamma_tar_lin = 10.0 ** (gamma_tar_db / 10.0)
+        inner_steps = 30 if outer == 0 else t_inner
+
+        for _ in range(inner_steps):
+            p_watts = np.where(ue_active, 10.0 ** (P_dbm / 10.0) / 1000.0, 0.0)
+            rx_tot = G_eff @ p_watts
+            rx_util = np.diagonal(G_eff) * p_watts
+            interf = rx_tot - rx_util
+            sinr_lin = np.where(p_watts > 0, rx_util / (interf + P_n), 0.0)
+
+            direcao = np.sign(gamma_tar_lin - sinr_lin)
+            P_dbm = np.where(
+                ue_active,
+                np.clip(P_dbm + MU_STEP * direcao, P_MIN_DBM, P_MAX_DBM),
+                P_dbm,
+            )
+
+        # Outer Loop
+        p_watts = np.where(ue_active, 10.0 ** (P_dbm / 10.0) / 1000.0, 0.0)
+        rx_tot = G_eff @ p_watts
+        rx_util = np.diagonal(G_eff) * p_watts
+        interf = rx_tot - rx_util
+        sinr_lin = np.where(p_watts > 0, rx_util / (interf + P_n), 0.0)
+        sinr_db = 10.0 * np.log10(sinr_lin + 1e-30)
+
+        target_changed = False
+        for k in range(K):
+            if not ue_active[k]:
+                continue
+            old_tar = gamma_tar_db[k]
+
+            if (sinr_db[k] >= gamma_tar_db[k] - tol_db) and (P_dbm[k] < P_MAX_DBM):
+                gamma_tar_db[k] = min(GAMMA_MAX_DB, gamma_tar_db[k] + 1.0)
+            elif (P_dbm[k] >= P_MAX_DBM) and (sinr_db[k] < gamma_tar_db[k] - tol_db):
+                gamma_tar_db[k] -= 1.0
+
+            if gamma_tar_db[k] < GAMMA_MIN_DB:
+                ue_active[k] = False
+                target_changed = True
+            elif gamma_tar_db[k] != old_tar:
+                target_changed = True
+
+        if not target_changed:
+            break
+
+    p_watts_final = np.where(ue_active, 10.0 ** (P_dbm / 10.0) / 1000.0, 0.0)
+    return p_watts_final, sinr_lin
