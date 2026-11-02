@@ -12,20 +12,7 @@ Avalia o sistema sob:
 import matplotlib.pyplot as plt
 import numpy as np
 
-# Tentativa de importação modular do seu pacote simulator
-try:
-    from simulator.antennas import calc_ula_gain_vectorized as calc_ula_gain
-except ImportError:
-
-    def calc_ula_gain(
-        theta_real: np.ndarray, theta_tgt: np.ndarray, L: int
-    ) -> np.ndarray:
-        """Calcula o ganho diretivo do ULA (d = lambda/2) de forma 100% vetorizada."""
-        ell = np.arange(L)
-        d_sin = np.sin(theta_real) - np.sin(theta_tgt)
-        fase = np.pi * ell[:, None] * d_sin[None, :]
-        return np.abs(np.sum(np.exp(1j * fase), axis=0)) ** 2 / L
-
+from src.simulator.antennas import calc_ula_gain
 
 # ==============================================================================
 # 1. PARÂMETROS DA SEÇÃO 2.2 E FÍSICA DO CANAL

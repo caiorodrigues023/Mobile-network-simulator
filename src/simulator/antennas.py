@@ -122,3 +122,11 @@ def antenna_gain(
         return smb_gains(phi, L=L, J=J)
 
     raise ValueError(f"Modelo de antena desconhecido: {model!r}")
+
+
+def calc_ula_gain(theta_real: np.ndarray, theta_tgt: np.ndarray, L: int) -> np.ndarray:
+    """Calcula o ganho diretivo do ULA (d = lambda/2) de forma 100% vetorizada."""
+    ell = np.arange(L)
+    d_sin = np.sin(theta_real) - np.sin(theta_tgt)
+    fase = np.pi * ell[:, None] * d_sin[None, :]
+    return np.abs(np.sum(np.exp(1j * fase), axis=0)) ** 2 / L
