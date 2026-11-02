@@ -64,7 +64,7 @@ def simulate_scenario(
     Executa a simulação temporal (dt = 1 ms) de um UE cruzando tangencialmente
     o broadside do AP na distância perpendicular D.
     """
-    # Methodology remark: reseta a semente antes de cada bateria de snapshots
+    # Reseta a Seed
     np.random.seed(SEED)
 
     v_ms = v_kmh / 3.6
@@ -80,7 +80,7 @@ def simulate_scenario(
 
     # Rastreamento discreto com atraso Delta T
     theta_tgt = np.zeros_like(theta_real)
-    step_samples = max(1, int(round(delta_t / DT)))
+    step_samples = max(1, round(delta_t / DT))
 
     for i in range(0, len(t), step_samples):
         end_idx = min(i + step_samples, len(t))

@@ -1,0 +1,149 @@
+% !TeX root = report_scichal4A.tex
+
+\documentclass[a4paper, 12pt]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[portuguese]{babel}
+\usepackage{hyperref} % insert url
+\usepackage{booktabs} % fazer tabelas
+\usepackage{mathptmx}
+\usepackage{enumitem}
+\usepackage{siunitx}
+
+\usepackage{amsmath}
+
+% Margins
+\usepackage{geometry}
+\geometry{left=30mm,right=20mm, bindingoffset=0mm, top=30mm,bottom=20mm,includefoot}
+
+% Images
+\usepackage{graphicx}
+\graphicspath{ {./images/} }
+\usepackage{subcaption}
+
+% Indent first sentence of a paragraph
+\usepackage{indentfirst}
+
+% Page numbers at bottom right
+\usepackage{fancyhdr}
+\pagestyle{fancy}
+\fancyhf{}
+\renewcommand{\headrulewidth}{0pt}
+\rfoot{\thepage}
+
+% 1.5 line spacing (yes, 1.25 is actually 1.5)
+\fontsize{10}{12}
+\linespread{1.50}
+\fontfamily{ptm}
+\selectfont
+
+% Indent size
+\setlength\parindent{10mm}
+
+% Jump 20pt
+\newcommand{\jump}[1]{{\vspace{20pt}}}
+
+% Summary
+\usepackage{tocloft}
+\renewcommand{\cftsecfont}{\bfseries}  % Seções em negrito
+\renewcommand{\cftsecpagefont}{\bfseries} % Números de página em negrito
+\setlength{\cftbeforesecskip}{0.5cm} % Espaçamento entre seções no sumário
+\usepackage{multirow}
+
+% Page numbers at bottom right, and dynamic section name at bottom left
+\usepackage{fancyhdr}
+\pagestyle{fancy}
+\fancyhf{}
+\renewcommand{\headrulewidth}{0pt}
+\fancyfoot[L]{\nouppercase{\leftmark}} % Adds the name of the current section to the left corner of the footer
+\fancyfoot[R]{\thepage} % Page number in the right corner of the footer
+\renewcommand{\footrulewidth}{0.4pt} % Sets a thin line in the footer
+
+% Footer spacing
+\usepackage[bottom]{footmisc}
+\setlength{\footskip}{50pt} % Adjust the value as needed.
+
+%% Code style
+\usepackage{listings} % package to put code line
+\usepackage{float}
+\usepackage{xcolor,enumerate}
+
+\definecolor{codegreen}{rgb}{0,0.6,0}
+\definecolor{codegray}{rgb}{0.5,0.5,0.5}
+\definecolor{codepurple}{rgb}{0.58,0,0.82}
+\definecolor{backcolour}{rgb}{0.95,0.95,0.92}
+
+\lstdefinestyle{mystyle}{
+    backgroundcolor=\color{backcolour},   
+    commentstyle=\color{codegreen},
+    keywordstyle=\color{magenta},
+    numberstyle=\tiny\color{codegray},
+    stringstyle=\color{codepurple},
+    basicstyle=\ttfamily\footnotesize,
+    breakatwhitespace=false,         
+    breaklines=true,                 
+    captionpos=b,                    
+    keepspaces=true,                 
+    numbers=left,                    
+    numbersep=5pt,                  
+    showspaces=false,                
+    showstringspaces=false,
+    showtabs=false,                  
+    tabsize=2,
+    literate=
+        {á}{{\'a}}1
+        {à}{{\`a}}1
+        {ã}{{\~a}}1
+        {â}{{\^a}}1
+        {é}{{\'e}}1
+        {ê}{{\^e}}1
+        {ê}{{\^e}}1
+        {í}{{\'i}}1
+        {ó}{{\'o}}1
+        {õ}{{\~o}}1
+        {ú}{{\'u}}1
+        {ü}{{\"u}}1
+        {ç}{{\c{c}}}1
+}
+
+\lstset{style=mystyle}
+
+\newenvironment{leftquote}[1][]
+{
+    \hspace{30pt} #1
+    \vspace{20pt}
+    \fontsize{10}{10}\selectfont
+    \begin{flushright}
+    \begin{minipage}{120mm}
+}
+{
+    \end{minipage}
+    \end{flushright}
+    \par
+    \vspace{20pt}
+}
+
+\newcommand{\tmp}{}
+
+\newenvironment{container}[3]
+{
+    \renewcommand{\tmp}{#3} %gambiarra
+    
+    \begin{center}
+    \begin{minipage}{#1}
+    \centering
+    #2
+}
+{
+    \raggedright
+    {\footnotesize \tmp}
+    \end{minipage}
+    \end{center}
+}
+\usepackage{amsmath, amssymb}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.18}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta}
+\usetikzlibrary{arrows.meta}
+
+\bibliographystyle{ieeetr} % Estilo de citação
