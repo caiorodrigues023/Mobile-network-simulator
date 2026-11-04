@@ -19,7 +19,7 @@ CENTRO DE TECNOLOGIA \\
 \vspace{4pt} 
 DEPARTAMENTO DE TELEINFORMÁTICA \\
 \vspace{4pt}
-INTRODUÇÃO À MODELAGEM E SIMULAÇÃO DE SISTEMAS DE COMUNICAÇÃO SEM FIO \\ 
+COEXISTÊNCIA E COMPARTILHAMENTO DINÂMICO DE ESPECTRO EM COMUNICAÇÕES MÓVEIS 6G \\
 \vspace{4pt}
 
 \vspace*{\fill}
@@ -88,22 +88,22 @@ INTRODUÇÃO À MODELAGEM E SIMULAÇÃO DE SISTEMAS DE COMUNICAÇÃO SEM FIO \\
 % --------------------------------------------- %
 \section{Atividade 1: Otimização Conjunta Distribuída de \textit{Beamforming} e Controle de Potência}
 
-A primeira atividade de pesquisa do desafio \textit{SciChal4A} investiga o acoplamento entre a filtragem espacial via \textit{Adaptive Beamforming} com Combinação de Razão Máxima (MRC) e o Controle de Potência Distribuído (DPC) em uma topologia multicelular de $M = 16$ APs equipados com Arranjos Circulares Uniformes (UCA). O objetivo central consiste em maximizar a capacidade agregada da rede e a eficiência energética sem degradar a proteção conferida aos usuários de borda contra a Interferência Co-canal (CCI).
+Na primeira atividade é investigado o acoplamento entre a filtragem espacial via \textit{Adaptive Beamforming} com Combinação de Razão Máxima (MRC) e o Controle de Potência Distribuído (DPC) em uma topologia multicelular de $M = 16$ APs equipados com Arranjos Circulares Uniformes (UCA). O objetivo central consiste em maximizar a capacidade agregada da rede e a eficiência energética sem degradar a proteção conferida aos usuários de borda contra a Interferência Co-canal (CCI).
 
 \subsection{Estratégia Distribuída \textit{Dual-Loop} e Negociação de Alvo}
 
-O algoritmo tradicional de Controle de Potência Distribuído com alvo fixo (\textit{Fixed-Target DPC}) impõe uma meta única de SINR ($\gamma_{\text{tar}} = 10\text{ dB}$) a todos os terminais ativos. Embora essa abordagem reduza a interferência mútua, ela subutiliza o alto ganho direcional proporcionado pelo \textit{beamforming} adaptativo para usuários em condições favoráveis de propagação. Para superar essa limitação, implementou-se a arquitetura em malha dupla (\textit{Dual-Loop Distributed Strategy}):
+O algoritmo de Controle de Potência Distribuído com alvo fixo (\textit{Fixed-Target DPC}) impõe uma meta única de SINR ($\gamma_{\text{tar}} = 10\text{ dB}$) a todos os terminais ativos. Embora essa abordagem reduza a interferência mútua, ela subutiliza o alto ganho direcional proporcionado pelo \textit{beamforming} adaptativo para usuários em condições favoráveis de propagação. Para superar essa limitação, implementou-se a arquitetura em malha dupla (\textit{Dual-Loop Distributed Strategy}):
 
 \begin{itemize}
-    \item \textbf{Malha Interna (\textit{Inner Loop} — Rápida):} Para cada usuário $k$, o algoritmo DPC atualiza iterativamente a potência de transmissão $p_k$ buscando convergir para a meta local instantânea $\gamma_{\text{tar},k}$.
-    \item \textbf{Malha Externa (\textit{Outer Loop} — Lenta):} Ajusta dinamicamente o alvo $\gamma_{\text{tar},k}$ de cada terminal dentro da janela operacional de $[-10, 20]\text{ dB}$, partindo de um valor inicial de $10\text{ dB}$.
+    \item \textbf{Malha Interna — Rápida:} Para cada usuário $k$, o algoritmo DPC atualiza iterativamente a potência de transmissão $p_k$ buscando convergir para a meta local instantânea $\gamma_{\text{tar},k}$.
+    \item \textbf{Malha Externa — Lenta:} Ajusta dinamicamente o alvo $\gamma_{\text{tar},k}$ de cada terminal dentro da janela operacional de $[-10, 20]\text{ dB}$, partindo de um valor inicial de $10\text{ dB}$.
 \end{itemize}
 
-A heurística de negociação de alvo (\textit{Target Negotiation}) no \textit{Outer Loop} segue três regras físicas associadas às limitações de potência e modulação:
+A estratégia de negociação de alvo (\textit{Target Negotiation}) no \textit{Outer Loop} segue três regras físicas associadas às limitações de potência e modulação:
 \begin{itemize}
-    \item \textbf{Aumento de Alvo (\textit{Target Increase}):} Caso o UE atinja sua meta atual operando abaixo da potência máxima ($p_k < p_{\max}$), incrementa-se $\gamma_{\text{tar},k}$ em $+1\text{ dB}$ para explorar o ganho espacial do feixe MRC até o limite de saturação de $20\text{ dB}$ (imposto pelo teto das constelações QAM práticas).
-    \item \textbf{Redução de Alvo (\textit{Target Decrease}):} Se o terminal saturar na potência máxima ($p_k = p_{\max} = 1\text{ W}$) e ainda assim não alcançar a meta ($\gamma_k < \gamma_{\text{tar},k}$), reduz-se $\gamma_{\text{tar},k}$ em $-1\text{ dB}$ para aliviar a interferência gerada sobre as células adjacentes.
-    \item \textbf{Bloqueio de Terminal (\textit{UE Blocking / Outage}):} Caso o alvo negociado caia abaixo do limiar de sensibilidade de $-10\text{ dB}$ (ou se a SINR resultante ao final do processo permanecer inferior a $-10\text{ dB}$), o terminal desliga seu transmissor ($p_k = 0$) e entra em estado de \textit{Outage}.
+    \item \textbf{Aumento de Alvo:} Caso o UE atinja sua meta atual operando abaixo da potência máxima ($p_k < p_{\max}$), incrementa-se $\gamma_{\text{tar},k}$ em $+1\text{ dB}$ para explorar o ganho espacial do feixe MRC até o limite de saturação de $20\text{ dB}$ (imposto pelo teto das constelações QAM práticas).
+    \item \textbf{Redução de Alvo:} Se o terminal saturar na potência máxima ($p_k = p_{\max} = 1\text{ W}$) e ainda assim não alcançar a meta ($\gamma_k < \gamma_{\text{tar},k}$), reduz-se $\gamma_{\text{tar},k}$ em $-1\text{ dB}$ para aliviar a interferência gerada sobre as células adjacentes.
+    \item \textbf{Bloqueio de Terminal:} Caso o alvo negociado caia abaixo do limiar de sensibilidade de $-10\text{ dB}$ (ou se a SINR resultante ao final do processo permanecer inferior a $-10\text{ dB}$), o terminal desliga seu transmissor ($p_k = 0$) e entra em estado de \textit{Outage}.
 \end{itemize}
 
 Para garantir rigor estatístico e comparabilidade direta, o gerador de números pseudoaleatórios foi reinicializado com a mesma semente (\textit{seed}) antes da bateria de \textit{snapshots} de Monte Carlo de cada estratégia, assegurando realizações idênticas de posicionamento, sombreamento lognormal e desvanecimento rápido de Rayleigh.
@@ -178,7 +178,7 @@ As curvas da Figura \ref{fig:act1_cdfs} evidenciam a mecânica de funcionamento 
 \newpage
 \section{Atividade 2: Impacto da Mobilidade no Desempenho do \textit{Beamforming}}
 
-A segunda atividade de pesquisa realiza a transição de \textit{snapshots} estáticos de Monte Carlo para uma simulação dinâmica orientada ao tempo (\textit{time-driven simulation}), com resolução temporal física de $dt = 1\text{ ms}$. Avalia-se um cenário onde um único UE equipado com antena omnidirecional atravessa a célula tangencialmente à direção principal (\textit{broadside}) de um AP equipado com um Arranjo Linear Uniforme (ULA) de espaçamento $d = \lambda / 2$.
+A segunda atividade realiza a transição de \textit{snapshots} estáticos de Monte Carlo para uma simulação dinâmica orientada ao tempo (\textit{time-driven simulation}), com resolução temporal física de $dt = 1\text{ ms}$. Avalia-se um cenário onde um único UE equipado com antena omnidirecional atravessa a célula tangencialmente à direção principal (\textit{broadside}) de um AP equipado com um Arranjo Linear Uniforme (ULA) de espaçamento $d = \lambda / 2$.
 
 \subsection{Modelagem Cinemática, ULA e Atraso de Rastreamento (\textit{Update Lag})}
 
