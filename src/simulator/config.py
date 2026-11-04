@@ -55,3 +55,18 @@ MODEL_COLORS: dict = {
     "dpc_fixed": "tab:blue",
     "dual_loop": "tab:orange",
 }
+
+
+# ---------------------------------------------------------------------------
+# Atividade 2 — Mobilidade e beam tracking (report_scichal4A, Seção 2)
+# ---------------------------------------------------------------------------
+MOBILITY_DT: float = 1e-3          # passo de tempo da simulação (s)
+MOBILITY_T_SIM: float = 4.0        # janela de observação centrada no broadside (s)
+MOBILITY_PROFILES_KMH: dict = {    # perfil → velocidade (km/h)
+    'Pedestrian': 3.0,
+    'Urban': 50.0,
+    'Highway': 120.0,
+}
+MOBILITY_UPDATE_PERIODS_S: tuple = (0.100, 0.050, 0.010)   # ΔT: Slow, Fair, High
+MOBILITY_ULA_SIZES: tuple = (8, 16, 32)                    # L: conventional → massive
+MOBILITY_DISTANCES_M: tuple = (25.0, 50.0, 75.0, 150.0)    # D: perto → borda da célula

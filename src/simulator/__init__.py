@@ -17,6 +17,7 @@ from .visualization import (
     plot_all_cdfs,
     compare_kpis,
     plot_padroes_smb,
+    plot_cenario_mobilidade,
 )
 
 __all__ = [
@@ -36,5 +37,5 @@ __all__ = [
     'distribuir_AP', 'cenario_aleatorio', 'simular_experimento',
     # visualization
     'plotar_mapa', 'plot_cdfs', 'plot_all_cdfs', 'compare_kpis',
-    'plot_padroes_smb',
+    'plot_padroes_smb', 'plot_cenario_mobilidade',
 ]
