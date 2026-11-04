@@ -12,20 +12,7 @@ Avalia o sistema sob:
 import matplotlib.pyplot as plt
 import numpy as np
 
-# Tentativa de importação modular do seu pacote simulator
-try:
-    from simulator.antennas import calc_ula_gain_vectorized as calc_ula_gain
-except ImportError:
-
-    def calc_ula_gain(
-        theta_real: np.ndarray, theta_tgt: np.ndarray, L: int
-    ) -> np.ndarray:
-        """Calcula o ganho diretivo do ULA (d = lambda/2) de forma 100% vetorizada."""
-        ell = np.arange(L)
-        d_sin = np.sin(theta_real) - np.sin(theta_tgt)
-        fase = np.pi * ell[:, None] * d_sin[None, :]
-        return np.abs(np.sum(np.exp(1j * fase), axis=0)) ** 2 / L
-
+from src.simulator.antennas import calc_ula_gain
 
 # ==============================================================================
 # 1. PARÂMETROS DA SEÇÃO 2.2 E FÍSICA DO CANAL
@@ -77,7 +64,7 @@ def simulate_scenario(
     Executa a simulação temporal (dt = 1 ms) de um UE cruzando tangencialmente
     o broadside do AP na distância perpendicular D.
     """
-    # Methodology remark: reseta a semente antes de cada bateria de snapshots
+    # Reseta a Seed
     np.random.seed(SEED)
 
     v_ms = v_kmh / 3.6
@@ -93,7 +80,7 @@ def simulate_scenario(
 
     # Rastreamento discreto com atraso Delta T
     theta_tgt = np.zeros_like(theta_real)
-    step_samples = max(1, int(round(delta_t / DT)))
+    step_samples = max(1, round(delta_t / DT))
 
     for i in range(0, len(t), step_samples):
         end_idx = min(i + step_samples, len(t))
