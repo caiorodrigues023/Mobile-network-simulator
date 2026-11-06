@@ -50,7 +50,7 @@ def cenario_aleatorio(M: int, K: int, seed: int = None) -> tuple:
     aps = distribuir_AP(M)
     UE.id_counter = 0
     ues = [UE(aps) for _ in range(K)]
-    shadowing = gerar_shadowing(ues, aps)
+    shadowing = gerar_shadowing(K, M)
     return aps, ues, shadowing
 
 
@@ -90,7 +90,7 @@ def simular_experimento(M: int, N: int, K: int, sim: int,
     for _ in tqdm(range(sim)):
         UE.id_counter = 0
         ues = [UE(aps) for _ in range(K)]
-        shadowing = gerar_shadowing(ues, aps)
+        shadowing = gerar_shadowing(K, M)
 
         for model in antenna_models:
             # Reseta estado de associação

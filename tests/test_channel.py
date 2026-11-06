@@ -98,19 +98,19 @@ class TestAngleMatrix:
 
 class TestGerarShadowing:
     def test_shape(self, ues, aps):
-        s = gerar_shadowing(ues, aps)
+        s = gerar_shadowing(len(ues), len(aps))
         assert s.shape == (len(ues), len(aps))
 
     def test_valores_positivos(self, ues, aps):
         """Shadowing log-normal deve ser sempre positivo."""
-        s = gerar_shadowing(ues, aps)
+        s = gerar_shadowing(len(ues), len(aps))
         assert np.all(s > 0)
 
     def test_reproducivel_com_semente(self, ues, aps):
         np.random.seed(0)
-        s1 = gerar_shadowing(ues, aps)
+        s1 = gerar_shadowing(len(ues), len(aps))
         np.random.seed(0)
-        s2 = gerar_shadowing(ues, aps)
+        s2 = gerar_shadowing(len(ues), len(aps))
         np.testing.assert_array_equal(s1, s2)
 
     def test_distribuicao_log_normal(self, aps):
@@ -118,7 +118,7 @@ class TestGerarShadowing:
         UE.id_counter = 0
         np.random.seed(99)
         ues_big = [UE(aps) for _ in range(200)]
-        s = gerar_shadowing(ues_big, aps)
+        s = gerar_shadowing(len(ues_big), len(aps))
         log_s = np.log(s.ravel())
         assert abs(np.mean(log_s)) < 0.3          # média de log ≈ 0
         assert abs(np.std(log_s) - 2.0) < 0.3     # desvio ≈ 2
@@ -131,19 +131,19 @@ class TestGerarShadowing:
 class TestGainMatrix:
     def test_shape_omni(self, ues, aps):
         G = antenna_gain(ues, aps, model="omni")
-        shadowing = gerar_shadowing(ues, aps)
+        shadowing = gerar_shadowing(len(ues), len(aps))
         gains = gain_matrix(ues, aps, G, shadowing=shadowing)
         assert gains.shape == (len(ues), len(aps), 1)
 
     def test_shape_smb(self, ues, aps):
         G = antenna_gain(ues, aps, model="smb", L=8, J=8)
-        shadowing = gerar_shadowing(ues, aps)
+        shadowing = gerar_shadowing(len(ues), len(aps))
         gains = gain_matrix(ues, aps, G, shadowing=shadowing)
         assert gains.shape == (len(ues), len(aps), 8)
 
     def test_valores_positivos(self, ues, aps):
         G = antenna_gain(ues, aps, model="omni")
-        shadowing = gerar_shadowing(ues, aps)
+        shadowing = gerar_shadowing(len(ues), len(aps))
         gains = gain_matrix(ues, aps, G, shadowing=shadowing)
         assert np.all(gains > 0)
 

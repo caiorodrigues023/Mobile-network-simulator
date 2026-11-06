@@ -44,7 +44,7 @@ def plotar_mapa(aps: list, ues: list, shadowing: np.ndarray = None,
     todos com OS MESMOS APs, UEs e shadowing (comparação justa).
     """
     if shadowing is None:
-        shadowing = gerar_shadowing(ues, aps)
+        shadowing = gerar_shadowing(len(ues), len(aps))
 
     n = len(models)
     fig, axes = plt.subplots(1, n, figsize=(7.2 * n, 7.6), squeeze=False)
@@ -63,8 +63,16 @@ def plotar_mapa(aps: list, ues: list, shadowing: np.ndarray = None,
             ap.ues = []
 
         G = antenna_gain(ues, aps, model=model, L=L, J=J)
-        gains = gain_matrix(ues, aps, G, shadowing=shadowing)
-        attach_AP_UE(ues, aps, gains)
+        ue_xy = np.array([[ue.x, ue.y] for ue in ues], dtype=float)
+        ap_xy = np.array([[ap.x, ap.y] for ap in aps], dtype=float)
+        gains = gain_matrix(ue_xy, ap_xy, G, shadowing=shadowing)
+        serving_ap, serving_beam = attach_AP_UE(gains)
+        for i, ue in enumerate(ues):
+            ue.ap = aps[serving_ap[i]]
+            ue.beam = int(serving_beam[i])
+            ue.gain = gains[i, serving_ap[i], serving_beam[i]]
+            ue.angle = float(np.arctan2(ue.y - ue.ap.y, ue.x - ue.ap.x) % (2 * np.pi))
+            ue.ap.ues.append(ue)
 
         if model.startswith('adaptive'):
             err_deg = 0.0

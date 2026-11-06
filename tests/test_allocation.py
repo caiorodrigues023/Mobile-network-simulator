@@ -29,7 +29,7 @@ def cenario():
     aps = distribuir_AP(4)
     np.random.seed(42)
     ues = [UE(aps) for _ in range(8)]
-    shadowing = gerar_shadowing(ues, aps)
+    shadowing = gerar_shadowing(len(ues), len(aps))
     G = antenna_gain(ues, aps, model="omni")
     gains = gain_matrix(ues, aps, G, shadowing=shadowing)
     return {"aps": aps, "ues": ues, "gains": gains}

@@ -59,7 +59,7 @@ def cenario_basico(aps_grade_4) -> dict:
     # Copia a lista para não poluir o fixture de sessão
     aps = [AP(ap.x, ap.y, ap.id) for ap in aps_grade_4]
     ues = [UE(aps) for _ in range(4)]
-    shadowing = gerar_shadowing(ues, aps)
+    shadowing = gerar_shadowing(len(ues), len(aps))
     return {"aps": aps, "ues": ues, "shadowing": shadowing}
 
 

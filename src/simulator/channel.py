@@ -3,7 +3,7 @@
 # ---------------------------------------------------------------------------
 
 import numpy as np
-
+from .config import D_0, K_CONST, PATHLOSS_EXP, SIGMA_R, SIGMA_X
 
 # ---------------------------------------------------------------------------
 # Geometria angular
@@ -38,14 +38,13 @@ def angle_matrix(ues: list, aps: list) -> np.ndarray:
 # Shadowing log-normal
 # ---------------------------------------------------------------------------
 
-def gerar_shadowing(ues: list, aps: list) -> np.ndarray:
+def gerar_shadowing(K: int, M: int) -> np.ndarray:
     """
     Sorteia o shadowing log-normal de forma independente para cada link (UE, AP).
     Variável aleatória log-normal(μ=0, σ=2).
-
     Retorna: matriz (n_ues, n_aps).
     """
-    return np.random.lognormal(0, 2, size=(len(ues), len(aps)))
+    return np.random.lognormal(0, SIGMA_X, size=(K, M))
 
 
 # ---------------------------------------------------------------------------
@@ -66,7 +65,7 @@ def gain_matrix(ues: list, aps: list, G: np.ndarray,
     Retorna: (n_ues, n_aps, n_beams).
     """
     if shadowing is None:
-        shadowing = gerar_shadowing(ues, aps)
+        shadowing = gerar_shadowing(len(ues), len(aps))
 
     shadowing = np.asarray(shadowing)
     if shadowing.ndim == 2:
