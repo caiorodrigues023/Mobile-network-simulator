@@ -4,6 +4,7 @@
 
 import matplotlib.pyplot as plt
 import numpy as np
+import os
 from matplotlib.lines import Line2D
 from matplotlib.patches import Arc, Circle, Wedge
 
@@ -756,4 +757,98 @@ def plot_cenario_mobilidade(
         fig.savefig(savepath, dpi=160)
     if show:
         plt.show()
+    return fig
+
+# função auxiliar para plotar_convergencia_dual_loop()
+def _cores_auto(n: int) -> list:
+    """
+    Escolhe cores automaticamente para n curvas.
+    n <= 10 : paleta 'tab10' (cores bem distintas).
+    n  > 10 : amostra n cores igualmente espaçadas de um colormap contínuo,
+              então funciona para qualquer K sem repetir cores.
+    """
+    if n <= 10:
+        return [plt.get_cmap("tab10")(i) for i in range(n)]
+    return list(plt.get_cmap("turbo")(np.linspace(0.0, 1.0, n)))
+
+def plotar_convergencia_dual_loop(
+    hist: dict,
+    ue_labels: list = None,
+    p_max_dbm: float = None,
+    p_min_dbm: float = None,
+    savepath: str = None,
+    show: bool = True,
+    titulo_extra: str = ""
+):
+    """
+    Plota a convergência do Dual-Loop PC para UMA simulação (snapshot).
+
+    Painel esquerdo : potência de transmissão (dBm) de cada UE ao longo das
+                      iterações do loop interno. Linhas verticais tracejadas
+                      marcam o fim de cada iteração do loop externo.
+    Painel direito  : alvo de SINR negociado (dB) por UE a cada iteração
+                      do loop externo (escada: +1 dB / -1 dB).
+
+    hist : dicionário retornado por DPC_Dual_Loop(..., return_history=True).
+    """
+    from .config import P_MAX_DBM, P_MIN_DBM, GAMMA_MAX_DB, GAMMA_MIN_DB
+
+    p_max_dbm = P_MAX_DBM if p_max_dbm is None else p_max_dbm
+    p_min_dbm = P_MIN_DBM if p_min_dbm is None else p_min_dbm
+
+    p_w = hist["power_w"]                       # (T, K)
+    T, K = p_w.shape
+    if ue_labels is None:
+        ue_labels = [f"UE{k + 1}" for k in range(K)]   # começa em 1, como na sua função
+
+    # W -> dBm; UE desligado (0 W) vira NaN para a curva simplesmente parar
+    with np.errstate(divide="ignore"):
+        p_dbm = np.where(p_w > 0, 10.0 * np.log10(p_w * 1000.0), np.nan)
+
+    it_inner = np.arange(T)
+    cores = _cores_auto(K)
+
+    fig, (ax_p, ax_t) = plt.subplots(1, 2, figsize=(15, 5.5),
+                                     gridspec_kw={"width_ratios": [1.6, 1]})
+
+    # --------- Painel A: potência x iteração (loop interno) ---------
+    for k in range(K):
+        ax_p.plot(it_inner, p_dbm[:, k], color=cores[k], lw=1.4,
+                  label=ue_labels[k])
+
+    for m in hist["outer_marks"]:
+        ax_p.axvline(m - 0.5, color="gray", ls=":", lw=0.6, alpha=0.7)
+
+    ax_p.axhline(p_max_dbm, color="r", ls="--", lw=0.9, label=f"P_max ({p_max_dbm:g} dBm)")
+    ax_p.axhline(p_min_dbm, color="k", ls="--", lw=0.9, label=f"P_min ({p_min_dbm:g} dBm)")
+    ax_p.set_title(f"Convergência da Potência de Transmissão (Dual-Loop PC) {titulo_extra}",
+                   fontweight="bold")
+    ax_p.set_xlabel("Iteração do loop interno (linhas pontilhadas = fim de cada iteração externa)")
+    ax_p.set_ylabel("Potência (dBm)")
+    ax_p.set_ylim(p_min_dbm - 2, p_max_dbm + 2)
+    ax_p.grid(True, ls="--", alpha=0.6)
+    ax_p.legend(fontsize=8, ncol=2)
+
+    # --------- Painel B: alvo negociado x iteração externa ---------
+    tgt = hist["target_db"]                     # (n_outer+1, K)
+    it_outer = np.arange(tgt.shape[0])
+    for k in range(K):
+        ax_t.step(it_outer, tgt[:, k], where="post", color=cores[k],
+                  lw=1.6, label=ue_labels[k])
+
+    ax_t.axhline(GAMMA_MAX_DB, color="r", ls="--", lw=0.9, label=f"Teto ({GAMMA_MAX_DB:g} dB)")
+    ax_t.axhline(GAMMA_MIN_DB, color="k", ls="--", lw=0.9, label=f"Outage ({GAMMA_MIN_DB:g} dB)")
+    ax_t.set_title("Negociação do Alvo de SINR (Loop Externo)", fontweight="bold")
+    ax_t.set_xlabel("Iteração do loop externo")
+    ax_t.set_ylabel(r"$\gamma_{tar}$ (dB)")
+    ax_t.grid(True, ls="--", alpha=0.6)
+    ax_t.legend(fontsize=8, ncol=2)
+
+    plt.tight_layout()
+    if savepath:
+        # Cria a subpasta (e as intermediárias) se ainda não existir
+        pasta = os.path.dirname(savepath)
+        if pasta:
+            os.makedirs(pasta, exist_ok=True)
+        fig.savefig(savepath, dpi=150)
     return fig

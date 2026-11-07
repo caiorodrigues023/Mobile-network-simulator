@@ -3,15 +3,20 @@ run_scichal4a.py — Ponto de Entrada da Simulação (SciChal4A)
 
 """
 
+import os
 import time
 
 import numpy as np
+import matplotlib.pyplot as plt
+
+FIG_DIR = os.path.join("figures", "convergencia")
 
 # Importa as funções modulares da sua arquitetura
 from src.simulator.config import B_TOTAL
 from src.simulator.runner import simular_scichal4a
-from src.simulator.visualization import plot_all_cdfs, plot_scichal4a_kpis
+from src.simulator.visualization import plot_all_cdfs, plot_scichal4a_kpis, plotar_convergencia_dual_loop
 
+N_HIST = 5
 
 def run_experiment():
     print("======================================================")
@@ -21,7 +26,7 @@ def run_experiment():
     # Parâmetros do sistema
     M = 16
     N = 1
-    SIM = 100000  # 10 mil snapshots
+    SIM = 100  # 10 mil snapshots
     K_scenarios = [1, 4, 8]
 
     # Algoritmos mapeados no seu simular_scichal4a_vetorizado
@@ -33,9 +38,12 @@ def run_experiment():
     B_c = B_TOTAL / N
     start_time = time.time()
 
+    historicos = {}
+
     for K in K_scenarios:
         # 1. Aciona o "Motor de Fórmula 1" matricial no runner.py
-        stats = simular_scichal4a(M=M, N=N, K=K, sim=SIM)
+        stats = simular_scichal4a(M=M, N=N, K=K, sim=SIM, n_hist=N_HIST)
+        historicos[K] = stats["dual_loop_hist"]
 
         # 2. Consolida as estatísticas exigidas para o KPI daquele cenário
         for algo in algorithms:
@@ -84,6 +92,19 @@ def run_experiment():
         algo: {f"K={k}": resultados_consolidados[algo][k] for k in K_scenarios}
         for algo in algorithms
     }
+
+    # Convergência do Dual-Loop nos primeiros snapshots de cada cenário
+    for K, hists in historicos.items():
+        if K == 1:
+            continue  # Não faz sentido plotar para K=1, pois não há interferência
+        for h in hists:
+            fig = plotar_convergencia_dual_loop(
+                h,
+                titulo_extra=f"(K={K}, snapshot {h['snapshot']})",
+                savepath=os.path.join(FIG_DIR, f"convergencia_K{K}_snap{h['snapshot']}.png"),
+                show=False,
+            )
+            plt.close(fig)
 
     plot_all_cdfs(resultados_cdfs, labels_k, algorithms)
 
