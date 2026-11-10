@@ -176,7 +176,6 @@ def simular_scichal4a(M: int, N: int, K: int, sim: int, n_hist: int = 5) -> dict
     """
     aps = distribuir_AP(M)
     ap_xy = np.array([[ap.x, ap.y] for ap in aps])
-    
 
     B_c = B_TOTAL / N
     P_n = B_c * K_0
@@ -284,8 +283,13 @@ def simular_scichal4a(M: int, N: int, K: int, sim: int, n_hist: int = 5) -> dict
 
         want_hist = sim_idx < n_hist
         out = DPC_Dual_Loop(
-            G_eff, P_n, gamma_tar_db, ue_active,
-            t_outer=35, t_inner=15, tol_db=0.5,
+            G_eff,
+            P_n,
+            gamma_tar_db,
+            ue_active,
+            t_outer=50,
+            t_inner=50,
+            tol_db=0.5,
             return_history=want_hist,
         )
         if want_hist:
