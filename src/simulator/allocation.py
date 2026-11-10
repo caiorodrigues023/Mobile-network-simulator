@@ -1,4 +1,8 @@
-''''''''''''''''''# ---------------------------------------------------------------------------
+(
+    """"""
+    """"""
+    """"""
+)  # ---------------------------------------------------------------------------
 # allocation.py — Attach, Alocação de Canais e DPC
 # ---------------------------------------------------------------------------
 
@@ -151,14 +155,14 @@ def DPC(
 
 
 def DPC_Dual_Loop(
-    G_eff: np.ndarray,              # (K, K) -> G_eff[k,i] = ganho de canal × ganho MRC do feixe do UE k sobre o UE i, visto no AP do UE k. A diagonal contém o ganho do próprio UE k.
-    P_n: float,                     # Potência de ruído (W)
-    gamma_tar_db: np.ndarray,       # SINR alvo inicial (dB)
-    ue_active: np.ndarray,          # Vetor de ativação dos UEs (1 para ativo, 0 para inativo)
-    t_outer: int = 35,              # máximo de iterações do loop externo
-    t_inner: int = 5000,            # máximo de iterações do loop interno  
-    tol_db: float = 0.5,            # tolerância de convergência do loop externo (dB)
-    return_history: bool = False    # Se True, retorna também o histórico de potências e SINRs (para plotagem e análise)
+    G_eff: np.ndarray,  # (K, K) -> G_eff[k,i] = ganho de canal × ganho MRC do feixe do UE k sobre o UE i, visto no AP do UE k. A diagonal contém o ganho do próprio UE k.
+    P_n: float,  # Potência de ruído (W)
+    gamma_tar_db: np.ndarray,  # SINR alvo inicial (dB)
+    ue_active: np.ndarray,  # Vetor de ativação dos UEs (1 para ativo, 0 para inativo)
+    t_outer: int = 50,  # máximo de iterações do loop externo
+    t_inner: int = 5000,  # máximo de iterações do loop interno
+    tol_db: float = 0.5,  # tolerância de convergência do loop externo (dB)
+    return_history: bool = False,  # Se True, retorna também o histórico de potências e SINRs (para plotagem e análise)
 ) -> tuple:
     """
     Joint MRC & Dual-Loop Power Control.
@@ -181,8 +185,13 @@ def DPC_Dual_Loop(
     P_dbm = np.full(K, P_MAX_DBM)
 
     # Estrutura do histórico
-    hist = {"power_w": [], "sinr_lin": [], "target_db": [gamma_tar_db.copy()],
-            "outer_marks": [], "active": [ue_active.copy()]}
+    hist = {
+        "power_w": [],
+        "sinr_lin": [],
+        "target_db": [gamma_tar_db.copy()],
+        "outer_marks": [],
+        "active": [ue_active.copy()],
+    }
 
     # ---------------- LOOP EXTERNO ----------------
     for outer in range(t_outer):
@@ -195,9 +204,8 @@ def DPC_Dual_Loop(
 
         # histórico dos 2 últimos vetores de potência (dBm) desta rodada externa
         P_hist = []
-        n_ciclo = 0          # passos consecutivos com P(t) == P(t-2)
-        N_CICLO = 3          # confirmações exigidas
-
+        n_ciclo = 0  # passos consecutivos com P(t) == P(t-2)
+        N_CICLO = 3  # confirmações exigidas
 
         # ---------------- LOOP INTERNO ----------------
         for _ in range(t_inner):
@@ -239,7 +247,6 @@ def DPC_Dual_Loop(
             )
         # ---------------- FIM ----------------
 
-
         # ---------------- LOOP EXTERNO ----------------
         # Reavalia o SINR com as potências resultantes do loop interno
         p_watts = np.where(ue_active, 10.0 ** (P_dbm / 10.0) / 1000.0, 0.0)
@@ -269,7 +276,7 @@ def DPC_Dual_Loop(
 
             # Regra 3: alvo negociado caiu abaixo do limiar -> blocking (outage)
             if gamma_tar_db[k] < GAMMA_MIN_DB:
-                ue_active[k] = False      # potência vira 0 W nas próximas contas
+                ue_active[k] = False  # potência vira 0 W nas próximas contas
                 target_changed = True
             elif gamma_tar_db[k] != old_tar:
                 target_changed = True

@@ -6,17 +6,22 @@ run_scichal4a.py — Ponto de Entrada da Simulação (SciChal4A)
 import os
 import time
 
-import numpy as np
 import matplotlib.pyplot as plt
+import numpy as np
 
 FIG_DIR = os.path.join("figures", "convergencia")
 
 # Importa as funções modulares da sua arquitetura
 from src.simulator.config import B_TOTAL
 from src.simulator.runner import simular_scichal4a
-from src.simulator.visualization import plot_all_cdfs, plot_scichal4a_kpis, plotar_convergencia_dual_loop
+from src.simulator.visualization import (
+    plot_all_cdfs,
+    plot_scichal4a_kpis,
+    plotar_convergencia_dual_loop,
+)
 
 N_HIST = 5
+
 
 def run_experiment():
     print("======================================================")
@@ -24,10 +29,10 @@ def run_experiment():
     print("======================================================")
 
     # Parâmetros do sistema
-    M = 16
+    M = 9
     N = 1
     SIM = 100  # 10 mil snapshots
-    K_scenarios = [1, 4, 8]
+    K_scenarios = [4]
 
     # Algoritmos mapeados no seu simular_scichal4a_vetorizado
     algorithms = ["full_power", "dpc_fixed", "dual_loop"]
@@ -101,7 +106,9 @@ def run_experiment():
             fig = plotar_convergencia_dual_loop(
                 h,
                 titulo_extra=f"(K={K}, snapshot {h['snapshot']})",
-                savepath=os.path.join(FIG_DIR, f"convergencia_K{K}_snap{h['snapshot']}.png"),
+                savepath=os.path.join(
+                    FIG_DIR, f"convergencia_K{K}_snap{h['snapshot']}.png"
+                ),
                 show=False,
             )
             plt.close(fig)
