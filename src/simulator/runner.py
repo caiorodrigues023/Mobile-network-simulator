@@ -170,7 +170,7 @@ def simular_experimento(
     return resultados
 
 
-def simular_scichal4a(M: int, N: int, K: int, sim: int) -> dict:
+def simular_scichal4a(M: int, N: int, K: int, sim: int, n_hist: int = 5) -> dict:
     """
     Executa a simulação Monte Carlo para o SciChal4A usando Pure Array Computing.
     """
@@ -194,8 +194,9 @@ def simular_scichal4a(M: int, N: int, K: int, sim: int) -> dict:
         }
         for algo in algorithms
     }
+    stats["dual_loop_hist"] = []
 
-    for _ in tqdm(range(sim), desc=f"Monte Carlo K={K}"):
+    for sim_idx in tqdm(range(sim), desc=f"Monte Carlo K={K}"):
         ue_xy = np.random.uniform(0, 1000, size=(K, 2))
 
         G_omni = np.ones((K, M, 1))
@@ -280,9 +281,24 @@ def simular_scichal4a(M: int, N: int, K: int, sim: int) -> dict:
         gamma_tar_db = np.full(K, GAMMA_TAR_INIT)
         ue_active = np.ones(K, dtype=bool)
 
-        p_watts_dual, sinr_lin_dual = DPC_Dual_Loop(
-            G_eff, P_n, gamma_tar_db, ue_active, t_outer=35, t_inner=15, tol_db=0.5
+        want_hist = sim_idx < n_hist
+        out = DPC_Dual_Loop(
+            G_eff,
+            P_n,
+            gamma_tar_db,
+            ue_active,
+            t_outer=50,
+            t_inner=50,
+            tol_db=0.5,
+            return_history=want_hist,
         )
+        if want_hist:
+            p_watts_dual, sinr_lin_dual, hist = out
+            hist["K"] = K
+            hist["snapshot"] = sim_idx
+            stats["dual_loop_hist"].append(hist)
+        else:
+            p_watts_dual, sinr_lin_dual = out
 
         se, _, sum_cap, tot_p, out = evaluate_physical_kpis(
             sinr_lin_dual, p_watts_dual, B_c

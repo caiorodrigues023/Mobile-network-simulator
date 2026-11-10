@@ -1,4 +1,8 @@
-# ---------------------------------------------------------------------------
+(
+    """"""
+    """"""
+    """"""
+)  # ---------------------------------------------------------------------------
 # allocation.py — Attach, Alocação de Canais e DPC
 # ---------------------------------------------------------------------------
 
@@ -151,69 +155,148 @@ def DPC(
 
 
 def DPC_Dual_Loop(
-    G_eff: np.ndarray,
-    P_n: float,
-    gamma_tar_db: np.ndarray,
-    ue_active: np.ndarray,
-    t_outer: int = 35,
-    t_inner: int = 15,
-    tol_db: float = 0.5,
+    G_eff: np.ndarray,  # (K, K) -> G_eff[k,i] = ganho de canal × ganho MRC do feixe do UE k sobre o UE i, visto no AP do UE k. A diagonal contém o ganho do próprio UE k.
+    P_n: float,  # Potência de ruído (W)
+    gamma_tar_db: np.ndarray,  # SINR alvo inicial (dB)
+    ue_active: np.ndarray,  # Vetor de ativação dos UEs (1 para ativo, 0 para inativo)
+    t_outer: int = 50,  # máximo de iterações do loop externo
+    t_inner: int = 5000,  # máximo de iterações do loop interno
+    tol_db: float = 0.5,  # tolerância de convergência do loop externo (dB)
+    return_history: bool = False,  # Se True, retorna também o histórico de potências e SINRs (para plotagem e análise)
 ) -> tuple:
     """
     Joint MRC & Dual-Loop Power Control.
-    Utiliza as matrizes G (ganho antena) e R (ganho canal) extraídas dos UEs.
+
+    Loop interno : DPC em passos de ±MU_STEP dB -> SINR persegue o alvo.
+    Loop externo : renegocia o alvo de cada UE (sobe/desce 1 dB) e
+                   desliga UEs cujo alvo caiu abaixo de GAMMA_MIN_DB.
+
+    Se return_history=True, retorna também um dict com a evolução temporal:
+      'power_w'    : (T, K) potência (W) a cada passo do loop interno
+      'sinr_lin'   : (T, K) SINR linear a cada passo do loop interno
+      'target_db'  : (n_outer+1, K) alvo de cada UE (linha 0 = alvo inicial)
+      'outer_marks': índices (em T) onde cada iteração do loop externo termina
+      'active'     : (n_outer+1, K) máscara de UEs ativos
+
     """
     K = G_eff.shape[0]
+
+    # Todos os UEs começam em potência máxima (p_init = p_max, como no roteiro)
     P_dbm = np.full(K, P_MAX_DBM)
 
+    # Estrutura do histórico
+    hist = {
+        "power_w": [],
+        "sinr_lin": [],
+        "target_db": [gamma_tar_db.copy()],
+        "outer_marks": [],
+        "active": [ue_active.copy()],
+    }
+
+    # ---------------- LOOP EXTERNO ----------------
     for outer in range(t_outer):
+        # Se todos foram desligados, não há mais nada a ser feito
         if not np.any(ue_active):
             break
 
+        # Alvos atuais convertidos para escala linear
         gamma_tar_lin = 10.0 ** (gamma_tar_db / 10.0)
-        inner_steps = 30 if outer == 0 else t_inner
 
-        for _ in range(inner_steps):
+        # histórico dos 2 últimos vetores de potência (dBm) desta rodada externa
+        P_hist = []
+        n_ciclo = 0  # passos consecutivos com P(t) == P(t-2)
+        N_CICLO = 3  # confirmações exigidas
+
+        # ---------------- LOOP INTERNO ----------------
+        for _ in range(t_inner):
+            # dBm -> Watts (UE desligado transmite 0 W)
             p_watts = np.where(ue_active, 10.0 ** (P_dbm / 10.0) / 1000.0, 0.0)
+
+            # Potência total recebida no AP de cada UE k: sum_i G_eff[k,i]*p_i
             rx_tot = G_eff @ p_watts
+            # Sinal útil: termo diagonal (o próprio UE k)
             rx_util = np.diagonal(G_eff) * p_watts
+            # Interferência = total - útil (UEs de outros APs e do mesmo AP)
             interf = rx_tot - rx_util
+
+            # SINR linear (0 para UEs desligados, evitando divisão inútil)
             sinr_lin = np.where(p_watts > 0, rx_util / (interf + P_n), 0.0)
 
+            # Grava a potência usada neste passo e o SINR resultante
+            if return_history:
+                hist["power_w"].append(p_watts.copy())
+                hist["sinr_lin"].append(sinr_lin.copy())
+
+            # --- critério de parada: ciclo de período <= 2 ---
+            if len(P_hist) >= 2 and np.array_equal(P_dbm, P_hist[-2]):
+                n_ciclo += 1
+                if n_ciclo >= N_CICLO:
+                    break
+            else:
+                n_ciclo = 0
+            P_hist.append(P_dbm.copy())
+            if len(P_hist) > 2:
+                P_hist.pop(0)
+
+            # --- atualização fixa de ±MU_STEP ---
             direcao = np.sign(gamma_tar_lin - sinr_lin)
             P_dbm = np.where(
                 ue_active,
                 np.clip(P_dbm + MU_STEP * direcao, P_MIN_DBM, P_MAX_DBM),
                 P_dbm,
             )
+        # ---------------- FIM ----------------
 
-        # Outer Loop
+        # ---------------- LOOP EXTERNO ----------------
+        # Reavalia o SINR com as potências resultantes do loop interno
         p_watts = np.where(ue_active, 10.0 ** (P_dbm / 10.0) / 1000.0, 0.0)
         rx_tot = G_eff @ p_watts
         rx_util = np.diagonal(G_eff) * p_watts
         interf = rx_tot - rx_util
         sinr_lin = np.where(p_watts > 0, rx_util / (interf + P_n), 0.0)
-        sinr_db = 10.0 * np.log10(sinr_lin + 1e-30)
+        sinr_db = 10.0 * np.log10(sinr_lin + 1e-30)  # 1e-30 evita log(0)
 
-        target_changed = False
+        target_changed = False  # flag de convergência do loop externo
+
         for k in range(K):
             if not ue_active[k]:
                 continue
             old_tar = gamma_tar_db[k]
 
+            # Regra 1: atingiu o alvo (dentro da tolerância) e ainda tem
+            # folga de potência -> eleva o alvo em 1 dB (até o teto de 20 dB,
+            # saturação QAM) para explorar o ganho espacial.
             if (sinr_db[k] >= gamma_tar_db[k] - tol_db) and (P_dbm[k] < P_MAX_DBM):
                 gamma_tar_db[k] = min(GAMMA_MAX_DB, gamma_tar_db[k] + 1.0)
+
+            # Regra 2: está em p_max e não alcança o alvo -> baixa o alvo
+            # em 1 dB (negociação), reduzindo a pressão por potência/interferência.
             elif (P_dbm[k] >= P_MAX_DBM) and (sinr_db[k] < gamma_tar_db[k] - tol_db):
                 gamma_tar_db[k] -= 1.0
 
+            # Regra 3: alvo negociado caiu abaixo do limiar -> blocking (outage)
             if gamma_tar_db[k] < GAMMA_MIN_DB:
-                ue_active[k] = False
+                ue_active[k] = False  # potência vira 0 W nas próximas contas
                 target_changed = True
             elif gamma_tar_db[k] != old_tar:
                 target_changed = True
 
+        # Grava o histórico do loop externo
+        hist["outer_marks"].append(len(hist["power_w"]))
+        hist["target_db"].append(gamma_tar_db.copy())
+        hist["active"].append(ue_active.copy())
+
+        # Se nenhum alvo mudou e ninguém foi desligado, o sistema estabilizou
         if not target_changed:
             break
 
+    # Potência final (0 W para quem está em outage)
     p_watts_final = np.where(ue_active, 10.0 ** (P_dbm / 10.0) / 1000.0, 0.0)
+
+    if return_history:
+        hist["power_w"] = np.array(hist["power_w"])
+        hist["sinr_lin"] = np.array(hist["sinr_lin"])
+        hist["target_db"] = np.array(hist["target_db"])
+        hist["active"] = np.array(hist["active"])
+        return p_watts_final, sinr_lin, hist
     return p_watts_final, sinr_lin
