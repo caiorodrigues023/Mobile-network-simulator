@@ -12,14 +12,14 @@ mobile-network-simulator/
 ├── src/
 │   └── simulator/
 │       ├── __init__.py        # Pacote Python — re-exporta todos os símbolos
-│       ├── config.py          # Constantes físicas e paletas de cor
+│       ├── config.py          # Constantes físicas, paletas de cor e parâmetros da Atividade 2
 │       ├── entities.py        # Classes AP e UE
 │       ├── antennas.py        # Modelos de antena (Omni, Setorial, SMB, MRC)
 │       ├── channel.py         # Path loss, shadowing log-normal e geometria
 │       ├── allocation.py      # Attach UE↔AP, alocação de canais e DPC
 │       ├── metrics.py         # SINR, SINR_adaptive, capacidade de Shannon
 │       ├── runner.py          # Motor Monte Carlo e posicionamento de APs
-│       └── visualization.py   # Mapas 2D, CDFs e gráficos de KPI
+│       └── visualization.py   # Mapas 2D, CDFs, gráficos de KPI e cenário de mobilidade
 ├── pyproject.toml             # Configuração do pacote (pip install -e .)
 ├── main.py                    # Ponto de entrada do simulador
 ├── scichal.py                 # Código original (referência)
@@ -111,6 +111,7 @@ from simulator import (
     plot_all_cdfs,
     compare_kpis,
     plot_padroes_smb,
+    plot_cenario_mobilidade,
 )
 
 # --- Experimento Monte Carlo ---
@@ -140,6 +141,9 @@ plot_all_cdfs(resultados_por_carga, ['K=8'])
 
 # --- Padrões polares SMB ---
 plot_padroes_smb(configs=[(8, 8), (8, 16), (16, 8)])
+
+# --- Cenário de mobilidade (Atividade 2) ---
+plot_cenario_mobilidade(savepath='cenario_atividade2.png', show=False)
 ```
 
 ### 5. Guia rápido de funções públicas
@@ -160,6 +164,7 @@ plot_padroes_smb(configs=[(8, 8), (8, 16), (16, 8)])
 | `plot_all_cdfs()` | `visualization` | CDFs de potência, SINR e capacidade |
 | `compare_kpis()` | `visualization` | Barras comparativas entre modelos |
 | `plot_padroes_smb()` | `visualization` | Padrões polares do arranjo SMB |
+| `plot_cenario_mobilidade()` | `visualization` | Ilustra o cenário da Atividade 2: mapa com trajetórias do UE, feixes MRC e lag de beam tracking |
 
 ---
 
@@ -181,6 +186,49 @@ $$G_k(\varphi) = \left| \mathbf{w}_k^T \mathbf{a}(\varphi) \right|^2, \quad \mat
 Beamforming em tempo real: o feixe é formado exatamente na direção do UE.
 O sufixo numérico indica o desvio-padrão do erro de estimativa de AoA em graus
 (ex.: `adaptive_5` → erro gaussiano $\sigma = 5°$).
+
+---
+
+## Cenário de Mobilidade (Atividade 2)
+
+`plot_cenario_mobilidade()` (em `visualization.py`) gera uma figura de dois painéis que
+ilustra o cenário do relatório `report_scichal4A.pdf` (Seção 2):
+
+* **Painel A — mapa.** O AP está na origem com um ULA (d = λ/2) de eixo paralelo a X e
+  broadside em +Y. O UE (antena omni) se move paralelamente ao eixo X com
+  `x(t) = v·(t − Tsim/2)` e `y = D`, cruzando o broadside em `t = Tsim/2`. O mapa mostra as
+  trajetórias para vários `D` (perto → borda da célula), o trecho percorrido por cada perfil
+  de velocidade, as marcas de atualização do feixe e o lobo MRC apontado para o UE em um
+  instante `t_beam`.
+* **Painel B — zoom do lag.** Mostra o pior instante do *beam tracking*: o feixe foi apontado
+  em `t = Tsim/2 − ΔT` e o UE andou `Δx = v·ΔT` até a próxima atualização, gerando o erro
+  angular `Δθ`. Para cada `L` do ULA calcula a perda de desalinhamento
+  `10·log10(G(θ_real, θ_tgt)/L)` (Eq. 2 do relatório, via `calc_ula_gain()`).
+* **Tabela** com o deslocamento `v·ΔT` para cada perfil e cada taxa de atualização.
+
+Parâmetros padrão (em `src/simulator/config.py`, prefixo `MOBILITY_`):
+
+| Constante | Valor | Descrição |
+|---|---|---|
+| `MOBILITY_DT` | 1 ms | Passo de tempo |
+| `MOBILITY_T_SIM` | 4,0 s | Janela centrada no broadside |
+| `MOBILITY_PROFILES_KMH` | 3 / 50 / 120 km/h | Pedestrian / Urban / Highway |
+| `MOBILITY_UPDATE_PERIODS_S` | 100 / 50 / 10 ms | ΔT: Slow / Fair / High |
+| `MOBILITY_ULA_SIZES` | 8 / 16 / 32 | L: conventional / advanced / massive MIMO |
+| `MOBILITY_DISTANCES_M` | 25 / 50 / 75 / 150 m | D: perto do AP → borda da célula |
+
+Uso:
+
+```python
+from simulator import plot_cenario_mobilidade
+
+plot_cenario_mobilidade(savepath='cenario_atividade2.png', show=False)
+
+# Variações: outro caso de zoom, outro arranjo para o feixe do mapa
+plot_cenario_mobilidade(D_zoom=25, v_zoom_kmh=50, T_zoom=0.05, L_beam=32)
+```
+
+O `main.py` já chama essa função ao final e salva `cenario_atividade2.png`.
 
 ---
 
@@ -227,6 +275,7 @@ git push origin feature/modelo-canal-3gpp
 | Nova métrica de desempenho | `src/simulator/metrics.py` |
 | Novo tipo de experimento ou topologia de rede | `src/simulator/runner.py` |
 | Novo tipo de gráfico ou mapa | `src/simulator/visualization.py` |
+| Novo parâmetro de mobilidade (velocidade, ΔT, L, D) | `src/simulator/config.py` (`MOBILITY_*`) |
 
 ### Adicionando um novo modelo de antena
 

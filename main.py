@@ -18,6 +18,7 @@ from src.simulator import (
     cenario_aleatorio,
     compare_kpis,
     plot_all_cdfs,
+    plot_cenario_mobilidade,
     plotar_mapa,
     simular_experimento,
 )
@@ -83,3 +84,10 @@ compare_kpis(
 # Mapa de um cenário representativo
 aps, ues, shadowing = cenario_aleatorio(M=M, K=4, seed=42)
 plotar_mapa(aps, ues, shadowing=shadowing, models=list(ANTENNA_MODELS), show=True)
+
+# ---------------------------------------------------------------------------
+# Atividade 2 — Cenário de mobilidade e beam tracking (ilustração)
+# ---------------------------------------------------------------------------
+# Mostra o mapa (AP + ULA, trajetórias do UE em D = 25/50/75/150 m, feixes MRC)
+# e o zoom do lag de beam tracking no broadside. Parâmetros em config.MOBILITY_*.
+plot_cenario_mobilidade(savepath="cenario_atividade2.png", show=True)

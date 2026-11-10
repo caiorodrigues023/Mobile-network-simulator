@@ -35,6 +35,7 @@ mobile-network-simulator/
 * **Conteúdo**:
   * Comprimento de onda ($\lambda = 1.0$).
   * Dicionários `MODEL_LABELS` e `MODEL_COLORS` para padronizar rótulos e cores nos gráficos.
+  * Parâmetros da Atividade 2 (`MOBILITY_DT`, `MOBILITY_T_SIM`, `MOBILITY_PROFILES_KMH`, `MOBILITY_UPDATE_PERIODS_S`, `MOBILITY_ULA_SIZES`, `MOBILITY_DISTANCES_M`).
 
 ### 2. `src/simulator/entities.py`
 * **Função**: Definir os objetos da rede.
@@ -82,6 +83,7 @@ mobile-network-simulator/
   * `plotar_mapa()`: Desenha o cenário 2D com as linhas de conexão, APs, UEs e formatos dos feixes ativos.
   * `plot_all_cdfs()`: Desenha as Distribuições Acumuladas de Probabilidade para Potência, SINR e Capacidade.
   * `compare_kpis()`: Gera gráficos de barras comparando ganhos em dB e razões de capacidade em relação à antena Omnidirecional.
+  * `plot_cenario_mobilidade()`: Ilustra o cenário da Atividade 2 — mapa com AP/ULA, trajetórias tangenciais do UE (x(t) = v·(t − Tsim/2), y = D), lobos MRC e zoom do lag de beam tracking com a perda de desalinhamento por L. Usa `calc_ula_gain()` (`antennas.py`) e as constantes `MOBILITY_*` (`config.py`); não depende do Monte Carlo.
 
 ---
 
@@ -97,3 +99,13 @@ mobile-network-simulator/
 8. **Visualização**: `runner.py` devolve os dicionários de dados consolidados para o `main.py`, que invoca as rotinas de gráfico do `visualization.py`.
 
 ---
+
+### Fluxo do Cenário de Mobilidade (Atividade 2)
+
+Independente do Monte Carlo (`runner.py`): é uma ilustração determinística, sem sorteios.
+
+1. **Parâmetros**: `config.py` fornece `MOBILITY_*` (velocidades, ΔT, L, D, Tsim, dt).
+2. **Geometria**: `visualization.plot_cenario_mobilidade()` monta as trajetórias `x(t) = v·(t − Tsim/2)`, `y = D` e os ângulos `θ = arctan(x/D)` a partir do broadside.
+3. **Ganho do ULA**: `antennas.calc_ula_gain()` avalia o ganho do arranjo (Eq. 2) para o lobo apontado (`θ_tgt`) e para a direção real do UE (`θ_real`).
+4. **Saída**: figura com mapa (painel A), zoom do lag e perda de desalinhamento por L (painel B) e tabela de deslocamentos `v·ΔT`; salva em PNG se `savepath` for informado.
+5. **Entrada**: `main.py` chama a função ao final da execução.
