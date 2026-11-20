@@ -106,7 +106,7 @@ def antenna_gain(
     """
     from .channel import angle_matrix  # importação local para evitar ciclo
 
-    phi = angle_matrix(np.array(ues), np.array(aps))  # (n_ues, n_aps)
+    phi = angle_matrix(ues, aps)  # (n_ues, n_aps)
 
     # Omni e todas as variações do adaptativo (adaptive_1, adaptive_5, …)
     if model == "omni" or model.startswith("adaptive"):

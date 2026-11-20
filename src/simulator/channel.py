@@ -9,17 +9,31 @@ import numpy as np
 from .config import D_0, K_CONST, PATHLOSS_EXP, SIGMA_R, SIGMA_X
 
 
+def _to_coords(arr) -> np.ndarray:
+    """Converte lista de objetos (UE, AP) ou array de coordenadas para matriz (N, 2)."""
+    if len(arr) == 0:
+        return np.zeros((0, 2), dtype=float)
+    if hasattr(arr[0], "x") and hasattr(arr[0], "y"):
+        return np.array([[obj.x, obj.y] for obj in arr], dtype=float)
+    arr = np.asarray(arr, dtype=float)
+    if arr.ndim == 1:
+        return arr.reshape(-1, 2)
+    return arr
+
+
 # ---------------------------------------------------------------------------
 # Geometria angular
 # ---------------------------------------------------------------------------
-def angle_matrix(ue_xy: np.ndarray, ap_xy: np.ndarray) -> np.ndarray:
+def angle_matrix(ue_xy, ap_xy) -> np.ndarray:
     """
-    ue_xy: matriz (K, 2) com coordenadas [x, y] dos UEs.
-    ap_xy: matriz (M, 2) com coordenadas [x, y] dos APs.
+    ue_xy: matriz (K, 2) ou lista de UEs.
+    ap_xy: matriz (M, 2) ou lista de APs.
     Retorna matriz (K, M) de ângulos de azimute.
     """
-    dx = ue_xy[:, None, 0] - ap_xy[None, :, 0]
-    dy = ue_xy[:, None, 1] - ap_xy[None, :, 1]
+    ue_coords = _to_coords(ue_xy)
+    ap_coords = _to_coords(ap_xy)
+    dx = ue_coords[:, None, 0] - ap_coords[None, :, 0]
+    dy = ue_coords[:, None, 1] - ap_coords[None, :, 1]
     return np.mod(np.arctan2(dy, dx), 2 * np.pi)
 
 
@@ -28,23 +42,25 @@ def angle_matrix(ue_xy: np.ndarray, ap_xy: np.ndarray) -> np.ndarray:
 # ---------------------------------------------------------------------------
 
 
-def gerar_shadowing(K: int, M: int) -> np.ndarray:
+def gerar_shadowing(K, M) -> np.ndarray:
     """
     Sorteia o shadowing log-normal de forma independente para cada link (UE, AP).
-    Variável aleatória log-normal(μ=0, σ=2).
-    Retorna: matriz (n_ues, n_aps).
+    Aceita inteiros K, M ou listas de entidades.
     """
-    return np.random.lognormal(0, SIGMA_X, size=(K, M))
+    n_k = len(K) if hasattr(K, "__len__") else int(K)
+    n_m = len(M) if hasattr(M, "__len__") else int(M)
+    return np.random.lognormal(0, SIGMA_X, size=(n_k, n_m))
 
 
-def gerar_rayleigh(K: int, M: int) -> np.ndarray:
+def gerar_rayleigh(K, M) -> np.ndarray:
     """
     Sorteia o fading de Rayleigh de forma independente para cada link (UE, AP).
-    Variável construída a partir de duas normais (Parte 3 do projeto).
-    Retorna: matriz (n_ues, n_aps).
+    Aceita inteiros K, M ou listas de entidades.
     """
-    x1 = np.random.normal(0, SIGMA_R, size=(K, M))
-    x2 = np.random.normal(0, SIGMA_R, size=(K, M))
+    n_k = len(K) if hasattr(K, "__len__") else int(K)
+    n_m = len(M) if hasattr(M, "__len__") else int(M)
+    x1 = np.random.normal(0, SIGMA_R, size=(n_k, n_m))
+    x2 = np.random.normal(0, SIGMA_R, size=(n_k, n_m))
     return np.sqrt(x1**2 + x2**2)
 
 
@@ -54,8 +70,8 @@ def gerar_rayleigh(K: int, M: int) -> np.ndarray:
 
 
 def gain_matrix(
-    ue_xy: np.ndarray,
-    ap_xy: np.ndarray,
+    ue_xy,
+    ap_xy,
     G: np.ndarray,
     shadowing: Optional[np.ndarray] = None,  # noqa
     use_rayleigh: bool = False,
@@ -63,8 +79,11 @@ def gain_matrix(
     """
     Calcula a matriz de ganho de canal combinando path loss (d⁻⁴),
     shadowing log-normal, fast fading opcional e ganho de antena G.
+    Aceita matrizes de coordenadas ou listas de UEs/APs.
     """
-    K, M = ue_xy.shape[0], ap_xy.shape[0]
+    ue_coords = _to_coords(ue_xy)
+    ap_coords = _to_coords(ap_xy)
+    K, M = ue_coords.shape[0], ap_coords.shape[0]
 
     if shadowing is None:
         shadowing = gerar_shadowing(K, M)
@@ -76,8 +95,8 @@ def gain_matrix(
         rayleigh = gerar_rayleigh(K, M)[:, :, None]
 
     # Distância Euclidiana (K, M)
-    dx = ue_xy[:, None, 0] - ap_xy[None, :, 0]
-    dy = ue_xy[:, None, 1] - ap_xy[None, :, 1]
+    dx = ue_coords[:, None, 0] - ap_coords[None, :, 0]
+    dy = ue_coords[:, None, 1] - ap_coords[None, :, 1]
     d = np.maximum(np.sqrt(dx**2 + dy**2), D_0)
 
     return shadowing * (rayleigh**2) * K_CONST / (d[:, :, None] ** PATHLOSS_EXP) * G

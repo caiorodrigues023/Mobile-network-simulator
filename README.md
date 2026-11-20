@@ -32,7 +32,39 @@ mobile-network-simulator/
 
 ## Como Usar o Simulador
 
-### 1. Executar o script principal
+### 1. Interface Gráfica Executável 3D (GUI)
+
+O simulador conta com uma interface gráfica completa em **PyQt6 + WebGL 3D**, permitindo controle total dos parâmetros, visualização tridimensional interativa do mapa com antenas, usuários, mapa de calor de cobertura e feixes de radiação, além de abas dedicadas de KPIs e mobilidade.
+
+#### Para iniciar:
+- **No Windows**: Dê um duplo clique no arquivo [`run_gui.bat`](./run_gui.bat).
+- **Via Terminal**:
+  ```bash
+  python run_gui.py
+  ```
+
+#### Recursos da Interface:
+- 🌐 **Visão 3D Interativa**:
+  - Orbit, Zoom, Pan e rotação 3D suave a 60 FPS (WebGL).
+  - Torres de APs estilizadas em 3D com mastros, radomes e identificadores.
+  - Usuários (UEs) representados por esferas coloridas no solo com tooltips dinâmicos.
+  - **Feixes de Antena 3D**: Lóbulos omnidirecionais, setoriais (120°), feixes diretivos SMB (UCA) e feixes afilados adaptativos MRC (*pencil beams*).
+  - **Mapa de Calor de Cobertura 3D**: Superfície contínua no solo com cálculo matricial em tempo real de SINR (dB), RSRP (dBm), Capacidade de Shannon (Mbps) ou AP Servidor (Voronoi).
+  - Enlaces de rádio UE ↔ AP com destaque visual.
+- 📊 **Painel de KPIs & Gráficos**:
+  - Cards de indicadores chave: SINR 10th (borda da célula), SINR mediano, Capacidade 10th, Vazão Agregada (Sum Capacity), Potência média e Taxa de Outage.
+  - CDFs interativas de SINR, Capacidade e Potência de transmissão.
+  - Gráficos de barras de comparação de vazão e ganho em dB vs Omni.
+- 🚗 **Aba de Mobilidade & Beam Tracking**:
+  - Análise em tempo real do cenário da Atividade 2 (ULA, trajetórias tangenciais, período de atualização $\Delta T$, lag de rastreamento e perda por desalinhamento).
+- 📋 **Tabela Detalhada de Usuários**:
+  - Inspeção de todos os UEs (coordenadas, AP servidor, canal, feixe, potência, SINR, capacidade) com busca, filtro e exportação para CSV.
+- ⚡ **Execução Não-Bloqueante**:
+  - Motor Monte Carlo em segundo plano (`QThread`) com barra de progresso em tempo real sem travar a interface.
+
+---
+
+### 2. Executar via Linha de Comando (CLI)
 
 ```bash
 python main.py

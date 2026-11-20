@@ -18,9 +18,19 @@ mobile-network-simulator/
 │       ├── allocation.py         # Acesso inicial (Attach), Alocação de Canais e DPC
 │       ├── metrics.py            # Cálculo de SINR (estático e adaptativo) e Capacidade de Shannon
 │       ├── runner.py             # Motor do experimento: orquestra rodadas e distribui APs
-│       └── visualization.py      # Geração de mapas 2D, gráficos CDF e comparações de KPI
+│       ├── visualization.py      # Geração de mapas 2D, gráficos CDF e comparações de KPI
+│       └── gui/                  # Interface Gráfica Executável (PyQt6 + WebGL 3D)
+│           ├── __init__.py       # Exporta a janela principal
+│           ├── styles.py         # Folha de estilos moderna dark theme (QSS)
+│           ├── worker.py         # Threads em segundo plano para Monte Carlo e snapshots
+│           ├── view3d.py         # Cena 3D interativa (APs, UEs, feixes e mapa de calor)
+│           ├── kpi_view.py       # Painel interativo de KPIs, estatísticas e CDFs
+│           ├── mobility_view.py  # Análise do cenário de mobilidade veicular (Atividade 2)
+│           └── users_table.py    # Tabela detalhada de usuários com busca e exportação CSV
 ├── pyproject.toml                # Configuração de empacotamento e dependências (pip install -e .)
 ├── requirements.txt              # Bibliotecas externas necessárias
+├── run_gui.py                    # Ponto de entrada da Interface Gráfica
+├── run_gui.bat                   # Inicializador rápido no Windows (duplo clique)
 ├── .gitignore                    # Arquivos ignorados pelo Git
 ├── main.py                       # Ponto de entrada (Entrypoint) do simulador
 └── ARCHITECTURE.md               # Este guia
