@@ -9,19 +9,28 @@ _BT: float = 1e8  # largura de banda total disponível (Hz)
 _K0: float = 1e-20  # constante de densidade espectral de ruído
 
 
-def SINR(ues: list, N: int, gains: np.ndarray, G: np.ndarray = None) -> list:
+def SINR(
+    ues: list,
+    N: int,
+    gains: np.ndarray,
+    G: np.ndarray = None,
+    b_total: float = _BT,
+    k0: float = _K0,
+) -> list:
     """
     Calcula a SINR para antenas convencionais (Omni, Setorial, SMB).
 
     Parâmetros
     ----------
-    N     : número de canais ortogonais.
-    gains : matriz (n_ues, n_aps, n_beams) de ganho de canal.
-    G     : ignorado (mantido por compatibilidade).
+    N       : número de canais ortogonais.
+    gains   : matriz (n_ues, n_aps, n_beams) de ganho de canal.
+    G       : ignorado (mantido por compatibilidade).
+    b_total : largura de banda total (Hz).
+    k0      : densidade espectral de ruído térmico (W/Hz).
 
     Retorna lista de valores SINR lineares, um por UE.
     """
-    pn = _K0 * _BT / N
+    pn = k0 * b_total / N
 
     P = np.array([ue.power for ue in ues])
     A = np.array([ue.ap.id for ue in ues])
@@ -48,18 +57,27 @@ def SINR(ues: list, N: int, gains: np.ndarray, G: np.ndarray = None) -> list:
     return sinr_list
 
 
-def SINR_adaptive(ues: list, N: int, gains: np.ndarray, Gm: np.ndarray) -> list:
+def SINR_adaptive(
+    ues: list,
+    N: int,
+    gains: np.ndarray,
+    Gm: np.ndarray,
+    b_total: float = _BT,
+    k0: float = _K0,
+) -> list:
     """
     Calcula a SINR com beamforming adaptativo MRC.
 
     Parâmetros
     ----------
-    gains : (n_ues, n_aps, 1) — path loss + shadowing SEM ganho de antena.
-    Gm    : saída de channel.adaptive_gains() — (n_ues, n_ues).
+    gains   : (n_ues, n_aps, 1) — path loss + shadowing SEM ganho de antena.
+    Gm      : saída de channel.adaptive_gains() — (n_ues, n_ues).
+    b_total : largura de banda total (Hz).
+    k0      : densidade espectral de ruído térmico (W/Hz).
 
     Retorna lista de valores SINR lineares, um por UE.
     """
-    pn = _K0 * _BT / N
+    pn = k0 * b_total / N
 
     P = np.array([ue.power for ue in ues])
     A = np.array([ue.ap.id for ue in ues])
@@ -78,7 +96,9 @@ def SINR_adaptive(ues: list, N: int, gains: np.ndarray, Gm: np.ndarray) -> list:
     return sinr_list
 
 
-def channel_capacity(sinr_valores: list, N: int) -> np.ndarray:
+def channel_capacity(
+    sinr_valores: list, N: int, b_total: float = _BT
+) -> np.ndarray:
     """
     Aplica a equação de Shannon-Hartley: C = B · log₂(1 + SINR).
 
@@ -86,10 +106,11 @@ def channel_capacity(sinr_valores: list, N: int) -> np.ndarray:
     ----------
     sinr_valores : lista ou array de valores SINR lineares.
     N            : número de canais ortogonais (define a largura de banda por canal).
+    b_total      : largura de banda total (Hz).
 
     Retorna array de capacidades em Mbps, um valor por UE.
     """
-    B_per_channel = _BT / N
+    B_per_channel = b_total / N
     sinr_array = np.asarray(sinr_valores)
     return B_per_channel * np.log2(1 + sinr_array) / 1e6
 

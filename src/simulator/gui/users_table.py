@@ -17,6 +17,9 @@ class UsersTableView(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._ues_data = []
+        self._snapshot_ues = []
+        self._snapshot_aps = []
+        self._mc_rounds = None
         self._setup_ui()
 
     def _setup_ui(self):
@@ -27,6 +30,11 @@ class UsersTableView(QWidget):
         # Barra superior de filtros e busca
         top_bar = QHBoxLayout()
         top_bar.setSpacing(10)
+
+        lbl_round = QLabel("Origem:")
+        self.combo_round = QComboBox()
+        self.combo_round.addItem("📍 Cenário 3D Atual (Snapshot)", "snapshot")
+        self.combo_round.currentIndexChanged.connect(self._on_round_changed)
 
         lbl_search = QLabel("🔍 Buscar:")
         self.search_input = QLineEdit()
@@ -41,6 +49,8 @@ class UsersTableView(QWidget):
         btn_export = QPushButton("📥 Exportar CSV")
         btn_export.clicked.connect(self._export_csv)
 
+        top_bar.addWidget(lbl_round)
+        top_bar.addWidget(self.combo_round, stretch=2)
         top_bar.addWidget(lbl_search)
         top_bar.addWidget(self.search_input, stretch=2)
         top_bar.addWidget(lbl_ap_filter)
@@ -71,25 +81,73 @@ class UsersTableView(QWidget):
         self.lbl_summary.setStyleSheet("color: #94a3b8; font-size: 11px;")
         layout.addWidget(self.lbl_summary)
 
-    def update_data(self, ues: list, aps: list):
-        """Atualiza a tabela com a lista de dicionários de UEs."""
-        self._ues_data = ues
+    def _load_table_source(self, ues: list, aps: list):
+        self._ues_data = ues or []
 
-        # Atualiza opções de AP no combo
         self.combo_ap.blockSignals(True)
         self.combo_ap.clear()
         self.combo_ap.addItem("Todos os APs")
-        for ap in aps:
+        for ap in aps or []:
             self.combo_ap.addItem(f"AP {ap['id']}")
         self.combo_ap.blockSignals(False)
 
-        self._populate_table(ues)
+        self._filter_table()
+
+    def update_data(self, ues: list, aps: list):
+        """Atualiza a tabela com o snapshot 3D atual."""
+        self._snapshot_ues = list(ues or [])
+        self._snapshot_aps = list(aps or [])
+        self.combo_round.blockSignals(True)
+        self.combo_round.setCurrentIndex(0)
+        self.combo_round.blockSignals(False)
+        self._load_table_source(self._snapshot_ues, self._snapshot_aps)
+
+    def set_mc_rounds(self, mc_rounds: dict):
+        """Popula as rodadas-chave do Monte Carlo no seletor e exibe a última rodada."""
+        if not mc_rounds or "presets" not in mc_rounds:
+            return
+        self._mc_rounds = mc_rounds
+        presets = mc_rounds["presets"]
+
+        self.combo_round.blockSignals(True)
+        self.combo_round.clear()
+        self.combo_round.addItem("📍 Cenário 3D Atual (Snapshot)", "snapshot")
+        labels = [
+            ("first", "1ª Rodada"),
+            ("last", "Última Rodada"),
+            ("best", "🏆 Melhor Rodada"),
+            ("median", "⚖️ Rodada Mediana"),
+            ("worst", "⚠️ Pior Rodada"),
+        ]
+        last_idx = 0
+        for key, title in labels:
+            r = presets.get(key)
+            if r:
+                self.combo_round.addItem(
+                    f"{title} (#{r['round']}) — {r['sum_capacity']:.0f} Mbps",
+                    key,
+                )
+                if key == "last":
+                    last_idx = self.combo_round.count() - 1
+        self.combo_round.setCurrentIndex(last_idx)
+        self.combo_round.blockSignals(False)
+        self._on_round_changed()
+
+    def _on_round_changed(self):
+        key = self.combo_round.currentData()
+        if key == "snapshot" or not self._mc_rounds:
+            self._load_table_source(self._snapshot_ues, self._snapshot_aps)
+            return
+        preset = self._mc_rounds.get("presets", {}).get(key)
+        if preset:
+            self._load_table_source(preset.get("ues", []), preset.get("aps", []))
 
     def _populate_table(self, ues: list):
         self.table.setSortingEnabled(False)
         self.table.setRowCount(len(ues))
 
         for row, u in enumerate(ues):
+            is_off = (not u.get("active", True)) or u.get("power_w", 1.0) <= 0.0
             items = [
                 QTableWidgetItem(f"UE {u['id']}"),
                 QTableWidgetItem(f"({u['x']:.0f}, {u['y']:.0f}) m"),
@@ -98,19 +156,21 @@ class UsersTableView(QWidget):
                 QTableWidgetItem(f"{u['angle_deg']:.1f}°"),
                 QTableWidgetItem(str(u["beam"])),
                 QTableWidgetItem(str(u["channel"])),
-                QTableWidgetItem(f"{u['power_w']:.4f}"),
-                QTableWidgetItem(f"{u['power_dbm']:.1f}"),
-                QTableWidgetItem(f"{u['sinr_db']:+.1f}"),
-                QTableWidgetItem(f"{u['cap_mbps']:.2f} Mbps"),
-                QTableWidgetItem(u["status"]),
+                QTableWidgetItem("0.0000" if is_off else f"{u['power_w']:.4f}"),
+                QTableWidgetItem("Desligado" if is_off else f"{u['power_dbm']:.1f}"),
+                QTableWidgetItem("Desligado (< limiar)" if is_off else f"{u['sinr_db']:+.1f}"),
+                QTableWidgetItem("0.00 Mbps" if is_off else f"{u['cap_mbps']:.2f} Mbps"),
+                QTableWidgetItem("Outage (Desligado)" if is_off else u["status"]),
             ]
 
             # Alinhamento centralizado
             for col, item in enumerate(items):
                 item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
 
-                # Destaque de cor no SINR
-                if col == 9:
+                # Destaque de cor no SINR e Status
+                if col in (9, 11) and (is_off or str(u.get("status", "")).startswith("Outage")):
+                    item.setForeground(QColor("#ef4444"))
+                elif col == 9:
                     s_db = u["sinr_db"]
                     if s_db >= 10:
                         item.setForeground(QColor("#34d399"))  # Verde
@@ -126,10 +186,12 @@ class UsersTableView(QWidget):
         # Atualiza resumo
         total = len(ues)
         if total > 0:
-            avg_sinr = sum(u["sinr_db"] for u in ues) / total
-            sum_cap = sum(u["cap_mbps"] for u in ues)
+            active_ues = [u for u in ues if u.get("active", True) and u.get("power_w", 1.0) > 0.0]
+            avg_sinr = (sum(u["sinr_db"] for u in active_ues) / len(active_ues)) if active_ues else 0.0
+            sum_cap = sum(u["cap_mbps"] for u in active_ues)
             self.lbl_summary.setText(
-                f"Total de {total} Usuários exibidos | SINR Médio: {avg_sinr:+.1f} dB | Capacidade Agregada: {sum_cap:.1f} Mbps"
+                f"Total de {total} UEs ({len(active_ues)} ligados, {total - len(active_ues)} desligados) | "
+                f"SINR Médio (ligados): {avg_sinr:+.1f} dB | Capacidade Agregada: {sum_cap:.1f} Mbps"
             )
         else:
             self.lbl_summary.setText("Nenhum usuário no cenário atual.")

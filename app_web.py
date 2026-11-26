@@ -15,20 +15,36 @@ import time
 import traceback
 import urllib.parse
 import webbrowser
-from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
 
-from src.simulator.gui.worker import SnapshotCalculator
-from src.simulator.gui.view3d import View3DGenerator
 from src.simulator.gui.kpi_view import KPIViewGenerator
 from src.simulator.gui.mobility_view import generate_mobility_html
-from src.simulator.runner import simular_experimento, simular_scichal4a
+from src.simulator.gui.view3d import View3DGenerator
+from src.simulator.gui.worker import (
+    SnapshotCalculator,
+    mc_round_seed,
+    run_monte_carlo_suite,
+)
 
 PORT = 8050
 ASSETS_DIR = os.path.join(ROOT_DIR, "src", "simulator", "gui", "assets")
+
+_SIM_STATE_LOCK = threading.Lock()
+_SIM_STATE = {
+    "running": False,
+    "pct": 0,
+    "msg": "Pronto",
+    "started_at": 0.0,
+}
+
+
+def _log(msg: str) -> None:
+    ts = time.strftime("%H:%M:%S")
+    print(f"[{ts}] {msg}", flush=True)
 
 
 class SimulatorWebHandler(SimpleHTTPRequestHandler):
@@ -37,11 +53,9 @@ class SimulatorWebHandler(SimpleHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
     def log_message(self, format, *args):
-        # Suprime logs de requisições de arquivos para manter o console limpo
         pass
 
     def end_headers(self):
-        # Cabeçalhos CORS e anti-cache para chamadas de API
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
@@ -52,6 +66,30 @@ class SimulatorWebHandler(SimpleHTTPRequestHandler):
         self.send_header("Content-Length", "0")
         self.end_headers()
 
+    def _build_snapshot_bundle(self, payload: dict) -> tuple[dict, str, str]:
+        snap = SnapshotCalculator.compute_snapshot(payload)
+        opacity = float(payload.get("opacity", 75)) / 100.0
+        show_heatmap = bool(payload.get("show_heatmap", True))
+        show_beams = bool(payload.get("show_beams", True))
+        show_links = bool(payload.get("show_links", True))
+        show_towers = bool(payload.get("show_towers", True))
+        show_ues = bool(payload.get("show_ues", True))
+
+        html_3d = View3DGenerator.generate_html(
+            snapshot_data=snap,
+            show_heatmap=show_heatmap,
+            show_beams=show_beams,
+            show_links=show_links,
+            show_towers=show_towers,
+            show_ues=show_ues,
+            heatmap_opacity=opacity,
+            plotly_url="/assets/plotly.min.js",
+        )
+        snapshot_kpi_html = KPIViewGenerator.generate_snapshot_kpi_html(
+            snap, plotly_url="/assets/plotly.min.js"
+        )
+        return snap, html_3d, snapshot_kpi_html
+
     def do_GET(self):
         url = urllib.parse.urlparse(self.path)
         path = url.path
@@ -59,40 +97,68 @@ class SimulatorWebHandler(SimpleHTTPRequestHandler):
         if path in ("/", "/index.html"):
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
-            html = self._get_main_html().encode("utf-8")
+            self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
+            html = (
+                self._get_main_html()
+                .replace("</head>", '<link rel="stylesheet" href="/assets/ux.css"></head>')
+                .replace("</body>", '<script src="/assets/ux.js"></script></body>')
+            ).encode("utf-8")
             self.send_header("Content-Length", str(len(html)))
             self.end_headers()
             self.wfile.write(html)
             return
 
-        elif path == "/assets/plotly.min.js":
-            js_file = os.path.join(ASSETS_DIR, "plotly.min.js")
-            if os.path.exists(js_file):
-                file_size = os.path.getsize(js_file)
+        elif path == "/api/progress":
+            with _SIM_STATE_LOCK:
+                running = bool(_SIM_STATE["running"])
+                elapsed = (
+                    max(0.0, time.time() - _SIM_STATE["started_at"])
+                    if running
+                    else 0.0
+                )
+                state = {
+                    "running": running,
+                    "pct": int(_SIM_STATE["pct"]),
+                    "msg": str(_SIM_STATE["msg"]),
+                    "elapsed_s": round(elapsed, 2),
+                }
+            self.send_json_response(state)
+            return
+
+        elif path.startswith("/assets/"):
+            name = os.path.basename(path)  # evita path traversal
+            f = os.path.join(ASSETS_DIR, name)
+            ctype = {".js": "application/javascript", ".css": "text/css"}.get(
+                os.path.splitext(name)[1]
+            )
+            if ctype and os.path.isfile(f):
                 self.send_response(200)
-                self.send_header("Content-Type", "application/javascript")
-                self.send_header("Content-Length", str(file_size))
-                self.send_header("Cache-Control", "public, max-age=86400")
+                self.send_header("Content-Type", ctype)
+                self.send_header("Content-Length", str(os.path.getsize(f)))
+                self.send_header(
+                    "Cache-Control",
+                    "public, max-age=86400" if name.startswith("plotly") else "no-cache",
+                )
                 self.end_headers()
-                with open(js_file, "rb") as f:
-                    # Envia em blocos para evitar pico de memória
-                    while chunk := f.read(65536):
+                with open(f, "rb") as fh:
+                    while chunk := fh.read(65536):
                         self.wfile.write(chunk)
                 return
-            else:
-                self.send_error(404, "plotly.min.js não encontrado")
-                return
+            self.send_error(404)
+            return
 
         elif path == "/api/initial_data":
-            params = {
-                "M": 4, "K": 8, "N": 1, "model": "smb", "L": 8, "J": 8,
-                "use_rayleigh": False, "power_mode": "full_power",
-                "heatmap_res": 45, "heatmap_metric": "sinr",
-                "h_ap": 25.0, "h_ue": 1.5,
-            }
-            snap = SnapshotCalculator.compute_snapshot(params)
-            html_3d = View3DGenerator.generate_html(snap, plotly_url="/assets/plotly.min.js")
-            self.send_json_response({"snapshot": snap, "html_3d": html_3d})
+            t0 = time.perf_counter()
+            _log("▶ Carregando cenário inicial 3D...")
+            snap, html_3d, snapshot_kpi_html = self._build_snapshot_bundle({})
+            _log(f"✔ Cenário inicial pronto em {time.perf_counter() - t0:.2f}s")
+            self.send_json_response(
+                {
+                    "snapshot": snap,
+                    "html_3d": html_3d,
+                    "snapshot_kpi_html": snapshot_kpi_html,
+                }
+            )
             return
 
         self.send_error(404, "Arquivo não encontrado")
@@ -111,60 +177,114 @@ class SimulatorWebHandler(SimpleHTTPRequestHandler):
 
         try:
             if path == "/api/snapshot":
-                snap = SnapshotCalculator.compute_snapshot(payload)
-                opacity = float(payload.get("opacity", 75)) / 100.0
-                show_heatmap = bool(payload.get("show_heatmap", True))
-                show_beams = bool(payload.get("show_beams", True))
-                show_links = bool(payload.get("show_links", True))
-                show_towers = bool(payload.get("show_towers", True))
-                show_ues = bool(payload.get("show_ues", True))
-
-                html_3d = View3DGenerator.generate_html(
-                    snapshot_data=snap,
-                    show_heatmap=show_heatmap,
-                    show_beams=show_beams,
-                    show_links=show_links,
-                    show_towers=show_towers,
-                    show_ues=show_ues,
-                    heatmap_opacity=opacity,
-                    plotly_url="/assets/plotly.min.js",
+                t0 = time.perf_counter()
+                _log(
+                    f"▶ Gerando cenário 3D (M={payload.get('M', 4)}, K={payload.get('K', 8)}, "
+                    f"antena={payload.get('model', 'smb')}, potência={payload.get('power_mode', 'full_power')}, "
+                    f"seed={payload.get('seed', -1)})..."
                 )
-                self.send_json_response({"snapshot": snap, "html_3d": html_3d})
+                snap, html_3d, snapshot_kpi_html = self._build_snapshot_bundle(payload)
+                _log(
+                    f"✔ Cenário 3D pronto em {time.perf_counter() - t0:.2f}s "
+                    f"(SINR médio: {snap['avg_sinr']:+.1f} dB)"
+                )
+                self.send_json_response(
+                    {
+                        "snapshot": snap,
+                        "html_3d": html_3d,
+                        "snapshot_kpi_html": snapshot_kpi_html,
+                    }
+                )
+                return
+
+            elif path == "/api/snapshot_kpis":
+                t0 = time.perf_counter()
+                _log("▶ Gerando KPIs instantâneos do cenário 3D...")
+                snap = SnapshotCalculator.compute_snapshot(payload)
+                kpi_html = KPIViewGenerator.generate_snapshot_kpi_html(
+                    snap, plotly_url="/assets/plotly.min.js"
+                )
+                _log(f"✔ KPIs instantâneos prontos em {time.perf_counter() - t0:.2f}s")
+                self.send_json_response({"snapshot": snap, "kpi_html": kpi_html})
                 return
 
             elif path == "/api/simulate":
-                # Executa simulação Monte Carlo
-                M = int(payload.get("M", 4))
-                N = int(payload.get("N", 1))
-                K = int(payload.get("K", 4))
-                sim = int(payload.get("sim", 100))
-                power_ctrl = str(payload.get("power_mode", "full_power"))
+                t0 = time.perf_counter()
+                scope = payload.get("mc_scope", "both")
+                sim = payload.get("sim", 100)
+                model = payload.get("model", "smb")
+                pwr = payload.get("power_mode", "full_power")
+                _log(
+                    f"🚀 Iniciando Simulação Monte Carlo: escopo={scope}, iterações={sim}, "
+                    f"M={payload.get('M', 4)}, K={payload.get('K', 8)}, "
+                    f"antena={model}, potência={pwr}"
+                )
+                with _SIM_STATE_LOCK:
+                    _SIM_STATE["running"] = True
+                    _SIM_STATE["pct"] = 1
+                    _SIM_STATE["msg"] = "Iniciando Monte Carlo..."
+                    _SIM_STATE["started_at"] = time.time()
 
-                if power_ctrl in ("dpc_fixed", "dual_loop"):
-                    stats = simular_scichal4a(M=M, N=N, K=K, sim=sim, n_hist=min(sim, 10))
-                    res = {"type": "scichal4a", "data": stats, "params": payload}
-                else:
-                    raw_res = simular_experimento(
-                        M=M, N=N, K=K, sim=sim,
-                        allocation="ortogonal",
-                        antenna_models=("omni", "sector", "smb", "adaptive"),
-                        use_rayleigh=bool(payload.get("use_rayleigh", False)),
-                        L=int(payload.get("L", 8)),
-                        J=int(payload.get("J", 8)),
+                def _on_progress(pct: int, msg: str) -> None:
+                    with _SIM_STATE_LOCK:
+                        _SIM_STATE["pct"] = int(pct)
+                        _SIM_STATE["msg"] = str(msg)
+                    _log(f"  ↳ [{int(pct):3d}%] {msg}")
+
+                try:
+                    res = run_monte_carlo_suite(payload, progress_cb=_on_progress)
+                    kpi_html = KPIViewGenerator.generate_kpi_html(
+                        res, plotly_url="/assets/plotly.min.js"
                     )
-                    res = {"type": "antenna_comparison", "data": raw_res, "params": payload}
+                    with _SIM_STATE_LOCK:
+                        _SIM_STATE["pct"] = 100
+                        _SIM_STATE["msg"] = "Simulação concluída!"
+                    _log(f"✔ Simulação Monte Carlo concluída em {time.perf_counter() - t0:.2f}s!")
+                    self.send_json_response(
+                        {
+                            "kpi_html": kpi_html,
+                            "mc_rounds": res.get("mc_rounds") if res else None,
+                            "status": "success",
+                        }
+                    )
+                finally:
+                    with _SIM_STATE_LOCK:
+                        _SIM_STATE["running"] = False
+                return
 
-                kpi_html = KPIViewGenerator.generate_kpi_html(res, plotly_url="/assets/plotly.min.js")
-                self.send_json_response({"kpi_html": kpi_html, "status": "success"})
+            elif path == "/api/mc_round":
+                t0 = time.perf_counter()
+                round_num = max(1, int(payload.get("round", 1)))
+                base_seed = int(payload.get("base_seed", 0))
+                r_seed = mc_round_seed(base_seed, round_num - 1)
+                _log(f"🔎 Carregando rodada Monte Carlo #{round_num} (seed={r_seed})...")
+                snap = SnapshotCalculator.compute_snapshot(
+                    {**payload, "seed": r_seed}, include_heatmap=False
+                )
+                _log(f"✔ Rodada #{round_num} pronta em {time.perf_counter() - t0:.2f}s")
+                self.send_json_response(
+                    {
+                        "round": round_num,
+                        "seed": r_seed,
+                        "ues": snap["ues"],
+                        "aps": snap["aps"],
+                        "avg_sinr": snap["avg_sinr"],
+                        "sum_capacity": snap["sum_capacity"],
+                    }
+                )
                 return
 
             elif path == "/api/mobility":
+                t0 = time.perf_counter()
                 v_kmh = float(payload.get("v_kmh", 120.0))
                 dt = float(payload.get("dt", 0.100))
                 D = float(payload.get("D", 50.0))
                 L = int(payload.get("L", 16))
-
-                html = generate_mobility_html(v_kmh, dt, D, L, plotly_url="/assets/plotly.min.js")
+                _log(f"🚗 Calculando Mobilidade (v={v_kmh} km/h, ΔT={dt * 1000:.0f} ms, D={D} m, L={L})...")
+                html = generate_mobility_html(
+                    v_kmh, dt, D, L, plotly_url="/assets/plotly.min.js"
+                )
+                _log(f"✔ Mobilidade calculada em {time.perf_counter() - t0:.2f}s")
                 self.send_json_response({"mobility_html": html})
                 return
 
@@ -172,16 +292,16 @@ class SimulatorWebHandler(SimpleHTTPRequestHandler):
 
         except Exception as e:
             err_trace = traceback.format_exc()
-            print(f"[ERRO API] Exceção em {path}:\n{err_trace}")
+            _log(f"[ERRO API] Exceção em {path}:\n{err_trace}")
             self.send_json_response(
-                {"error": str(e), "traceback": err_trace},
-                status_code=500
+                {"error": str(e), "traceback": err_trace}, status_code=500
             )
 
     def send_json_response(self, data: dict, status_code: int = 200):
         body = json.dumps(data).encode("utf-8")
         self.send_response(status_code)
         self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -193,7 +313,6 @@ class SimulatorWebHandler(SimpleHTTPRequestHandler):
     <meta charset="utf-8">
     <title>Mobile Network Simulator 3D (Modo Ultraleve)</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <script src="/assets/plotly.min.js"></script>
     <style>
         :root {
             --bg-dark: #0b0e14;
@@ -216,46 +335,74 @@ class SimulatorWebHandler(SimpleHTTPRequestHandler):
         }
         /* Barra Lateral */
         #sidebar {
-            width: 360px;
+            width: 390px;
             background: var(--bg-panel);
             border-right: 1px solid var(--border-color);
             display: flex;
             flex-direction: column;
             overflow-y: auto;
             flex-shrink: 0;
-            padding: 14px;
-            gap: 12px;
+            padding: 12px;
+            gap: 10px;
         }
-        .group-box {
+        details.group-box {
             background: var(--bg-card);
             border: 1px solid var(--border-color);
             border-radius: 8px;
-            padding: 12px;
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
+            padding: 8px 10px;
         }
-        .group-title {
+        details.group-box summary {
             font-size: 11px;
             font-weight: bold;
             color: var(--accent);
             text-transform: uppercase;
             letter-spacing: 0.5px;
-            border-bottom: 1px solid #1e2638;
-            padding-bottom: 4px;
-        }
-        label {
-            font-size: 11px;
-            color: var(--text-muted);
+            cursor: pointer;
+            list-style: none;
             display: flex;
             justify-content: space-between;
+            align-items: center;
         }
-        select, input[type="number"], input[type="range"] {
+        details.group-box[open] summary {
+            border-bottom: 1px solid #1e2638;
+            padding-bottom: 6px;
+            margin-bottom: 8px;
+        }
+        details.group-box summary::after {
+            content: '▸';
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+        details.group-box[open] summary::after {
+            content: '▾';
+        }
+        .group-body {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .grid-2 {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+        }
+        .grid-3 {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 6px;
+        }
+        label {
+            font-size: 10.5px;
+            color: var(--text-muted);
+            display: block;
+            margin-bottom: 3px;
+        }
+        select, input[type="number"], input[type="text"], input[type="range"] {
             background: #1a2232;
             color: var(--text-main);
             border: 1px solid #2e3a4e;
             border-radius: 5px;
-            padding: 6px 8px;
+            padding: 5px 7px;
             font-size: 12px;
             outline: none;
             width: 100%;
@@ -268,7 +415,9 @@ class SimulatorWebHandler(SimpleHTTPRequestHandler):
             font-size: 12px;
             color: var(--text-main);
             cursor: pointer;
+            margin: 0;
         }
+        .checkbox-row input { width: auto; }
         .btn {
             background: #1e293b;
             color: #fff;
@@ -339,10 +488,37 @@ class SimulatorWebHandler(SimpleHTTPRequestHandler):
             overflow: auto;
         }
         .tab-pane.active { display: block; }
+        #tab-mobility.active {
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        .mobility-toolbar {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 12px;
+            padding: 10px 14px;
+            background: var(--bg-panel);
+            border-bottom: 1px solid var(--border-color);
+            flex-shrink: 0;
+        }
+        .mobility-field {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .mobility-field label { margin: 0; }
+        .mobility-field select { width: auto; }
         iframe {
             width: 100%;
             height: 100%;
             border: none;
+        }
+        #iframe-mobility {
+            flex: 1;
+            height: auto;
+            min-height: 0;
         }
         /* Barra de Status */
         #statusbar {
@@ -388,119 +564,287 @@ class SimulatorWebHandler(SimpleHTTPRequestHandler):
     </style>
 </head>
 <body>
-    <!-- Barra Lateral de Configuração -->
+    <!-- Barra Lateral de Configuração Completa -->
     <div id="sidebar">
         <div style="display:flex; justify-content:space-between; align-items:center;">
             <h3 style="font-size:14px; color:#38bdf8;">📡 Simulador 3D</h3>
             <span style="font-size:10px; background:#10b981; color:#fff; padding:2px 6px; border-radius:4px; font-weight:bold;">MODO LEVE</span>
         </div>
 
-        <!-- Topologia -->
-        <div class="group-box">
-            <div class="group-title">📐 Topologia da Rede</div>
-            <div>
-                <label>Número de APs (M):</label>
-                <select id="param-M" onchange="updateSnapshot()">
-                    <option value="4" selected>4 APs (Grade 2×2)</option>
-                    <option value="9">9 APs (Grade 3×3)</option>
-                    <option value="16">16 APs (Grade 4×4)</option>
-                </select>
+        <!-- Topologia & Alocação -->
+        <details class="group-box" open>
+            <summary>📐 Topologia & Alocação</summary>
+            <div class="group-body">
+                <div class="grid-2">
+                    <div>
+                        <label for="param-M">APs (M):</label>
+                        <select id="param-M" onchange="updateSnapshot()">
+                            <option value="4" selected>4 APs (2×2)</option>
+                            <option value="9">9 APs (3×3)</option>
+                            <option value="16">16 APs (4×4)</option>
+                            <option value="25">25 APs (5×5)</option>
+                            <option value="36">36 APs (6×6)</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label for="param-K">Usuários (K):</label>
+                        <input type="number" id="param-K" value="8" min="1" max="128" onchange="updateSnapshot()">
+                    </div>
+                </div>
+                <div class="grid-2">
+                    <div>
+                        <label for="param-N">Canais (N):</label>
+                        <input type="number" id="param-N" value="1" min="1" max="16" onchange="updateSnapshot()">
+                    </div>
+                    <div>
+                        <label for="param-allocation">Alocação:</label>
+                        <select id="param-allocation" onchange="updateSnapshot()">
+                            <option value="ortogonal" selected>Ortogonal intra-AP</option>
+                            <option value="random">Aleatória (Random)</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="grid-3">
+                    <div>
+                        <label for="param-h-ap">Alt. AP (m):</label>
+                        <input type="number" id="param-h-ap" value="25" min="5" max="100" step="1" onchange="updateSnapshot()">
+                    </div>
+                    <div>
+                        <label for="param-h-ue">Alt. UE (m):</label>
+                        <input type="number" id="param-h-ue" value="1.5" min="0.5" max="20" step="0.5" onchange="updateSnapshot()">
+                    </div>
+                    <div>
+                        <label for="param-seed">Seed (-1=rnd):</label>
+                        <input type="number" id="param-seed" value="-1" min="-1" max="2147483647" step="1" onchange="updateSnapshot()">
+                    </div>
+                </div>
             </div>
-            <div>
-                <label>Número de UEs (K):</label>
-                <input type="number" id="param-K" value="8" min="1" max="64" onchange="updateSnapshot()">
-            </div>
-            <div>
-                <label>Canais Ortogonais (N):</label>
-                <input type="number" id="param-N" value="1" min="1" max="8" onchange="updateSnapshot()">
-            </div>
-        </div>
+        </details>
 
         <!-- Antenas e Feixes -->
-        <div class="group-box">
-            <div class="group-title">📡 Antenas & Feixes</div>
-            <div>
-                <label>Modelo de Antena:</label>
-                <select id="param-model" onchange="updateSnapshot()">
-                    <option value="smb" selected>SMB (Switched Multi-Beam UCA)</option>
-                    <option value="sector">Setorizado (3 setores 120°)</option>
-                    <option value="omni">Omnidirecional</option>
-                    <option value="adaptive">Adaptativo MRC (Ideal 0°)</option>
-                    <option value="adaptive_1">Adaptativo MRC (Erro 1°)</option>
-                    <option value="adaptive_5">Adaptativo MRC (Erro 5°)</option>
-                </select>
+        <details class="group-box" open>
+            <summary>📡 Antenas & Beamforming</summary>
+            <div class="group-body">
+                <div>
+                    <label for="param-model">Modelo de Antena:</label>
+                    <select id="param-model" onchange="updateSnapshot()">
+                        <option value="smb" selected>SMB (Switched Multi-Beam UCA)</option>
+                        <option value="sector">Setorizado (3 setores)</option>
+                        <option value="omni">Omnidirecional</option>
+                        <option value="adaptive">Adaptativo MRC (Ideal 0°)</option>
+                        <option value="adaptive_1">Adaptativo MRC (Erro 1°)</option>
+                        <option value="adaptive_5">Adaptativo MRC (Erro 5°)</option>
+                        <option value="adaptive_10">Adaptativo MRC (Erro 10°)</option>
+                    </select>
+                </div>
+                <div class="grid-2">
+                    <div>
+                        <label for="param-L">Elementos (L):</label>
+                        <select id="param-L" onchange="updateSnapshot()">
+                            <option value="2">L = 2</option>
+                            <option value="4">L = 4</option>
+                            <option value="8" selected>L = 8</option>
+                            <option value="16">L = 16</option>
+                            <option value="32">L = 32</option>
+                            <option value="64">L = 64</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label for="param-J">Feixes SMB (J):</label>
+                        <select id="param-J" onchange="updateSnapshot()">
+                            <option value="4">J = 4</option>
+                            <option value="8" selected>J = 8</option>
+                            <option value="12">J = 12</option>
+                            <option value="16">J = 16</option>
+                            <option value="24">J = 24</option>
+                            <option value="32">J = 32</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="grid-3">
+                    <div>
+                        <label for="param-aoa-err">Erro AoA (°):</label>
+                        <input type="number" id="param-aoa-err" value="0" min="0" max="30" step="0.5" onchange="updateSnapshot()">
+                    </div>
+                    <div>
+                        <label for="param-beamwidth">Abertura (°):</label>
+                        <input type="number" id="param-beamwidth" value="120" min="30" max="360" step="10" onchange="updateSnapshot()">
+                    </div>
+                    <div>
+                        <label for="param-g-min">Lób. g_min:</label>
+                        <input type="number" id="param-g-min" value="0.01" min="0.001" max="0.5" step="0.001" onchange="updateSnapshot()">
+                    </div>
+                </div>
             </div>
-            <div>
-                <label>Elementos do Arranjo (L):</label>
-                <select id="param-L" onchange="updateSnapshot()">
-                    <option value="4">L = 4 elementos</option>
-                    <option value="8" selected>L = 8 elementos</option>
-                    <option value="16">L = 16 elementos</option>
-                    <option value="32">L = 32 elementos</option>
-                </select>
-            </div>
-            <div>
-                <label>Feixes SMB (J):</label>
-                <select id="param-J" onchange="updateSnapshot()">
-                    <option value="4">J = 4 feixes</option>
-                    <option value="8" selected>J = 8 feixes</option>
-                    <option value="12">J = 12 feixes</option>
-                    <option value="16">J = 16 feixes</option>
-                </select>
-            </div>
-        </div>
+        </details>
 
-        <!-- Propagação e Potência -->
-        <div class="group-box">
-            <div class="group-title">🌊 Canal & Potência</div>
-            <label class="checkbox-row">
-                <input type="checkbox" id="param-rayleigh" onchange="updateSnapshot()">
-                <span>Fading Rayleigh</span>
-            </label>
-            <div>
-                <label>Controle de Potência:</label>
-                <select id="param-power" onchange="updateSnapshot()">
-                    <option value="full_power" selected>Full Power (1W / 30 dBm)</option>
-                    <option value="dpc_fixed">DPC Fixo (Meta 10 dB)</option>
-                    <option value="dual_loop">Dual-Loop DPC (Mitigação Outage)</option>
-                </select>
+        <!-- Canal & Propagação -->
+        <details class="group-box">
+            <summary>🌊 Canal de Propagação & Ruído</summary>
+            <div class="group-body">
+                <div class="grid-2">
+                    <div>
+                        <label for="param-bw">Banda Total (MHz):</label>
+                        <input type="number" id="param-bw" value="100" min="1" max="1000" step="1" onchange="updateSnapshot()">
+                    </div>
+                    <div>
+                        <label for="param-pathloss">Expoente Pathloss (n):</label>
+                        <input type="number" id="param-pathloss" value="4.0" min="2.0" max="6.0" step="0.1" onchange="updateSnapshot()">
+                    </div>
+                </div>
+                <div class="grid-3">
+                    <div>
+                        <label for="param-k-const">Constante K:</label>
+                        <input type="text" id="param-k-const" value="1e-4" onchange="updateSnapshot()">
+                    </div>
+                    <div>
+                        <label for="param-d0">d₀ mín (m):</label>
+                        <input type="number" id="param-d0" value="1.0" min="0.5" max="10" step="0.5" onchange="updateSnapshot()">
+                    </div>
+                    <div>
+                        <label for="param-k0">Ruído K₀ (W/Hz):</label>
+                        <input type="text" id="param-k0" value="1e-20" onchange="updateSnapshot()">
+                    </div>
+                </div>
+                <div class="grid-2">
+                    <div>
+                        <label for="param-sigma-x">Shadowing σ_X:</label>
+                        <input type="number" id="param-sigma-x" value="2.0" min="0" max="10" step="0.25" onchange="updateSnapshot()">
+                    </div>
+                    <div>
+                        <label for="param-sigma-r">Rayleigh σ_R:</label>
+                        <input type="number" id="param-sigma-r" value="0.7071" min="0.05" max="2.0" step="any" onchange="updateSnapshot()">
+                    </div>
+                </div>
+                <label class="checkbox-row">
+                    <input type="checkbox" id="param-rayleigh" onchange="updateSnapshot()">
+                    <span>Habilitar Fast Fading (Rayleigh)</span>
+                </label>
             </div>
-        </div>
+        </details>
+
+        <!-- Controle de Potência (DPC & Dual-Loop) -->
+        <details class="group-box" open>
+            <summary>⚡ Controle de Potência (DPC & Dual-Loop)</summary>
+            <div class="group-body">
+                <div>
+                    <label for="param-power">Algoritmo de Potência:</label>
+                    <select id="param-power" onchange="updateSnapshot()">
+                        <option value="full_power" selected>Full Power (P_max — normal)</option>
+                        <option value="dpc_fixed">DPC Fixo (Meta SINR — normal)</option>
+                        <option value="dual_loop">Dual-Loop DPC (Desliga Outage)</option>
+                    </select>
+                </div>
+                <div class="grid-2">
+                    <div>
+                        <label for="param-p-max">P_max (dBm):</label>
+                        <input type="number" id="param-p-max" value="30" min="0" max="50" step="1" onchange="updateSnapshot()">
+                    </div>
+                    <div>
+                        <label for="param-p-min">P_min (dBm):</label>
+                        <input type="number" id="param-p-min" value="0" min="-40" max="20" step="1" onchange="updateSnapshot()">
+                    </div>
+                </div>
+                <div class="grid-3">
+                    <div>
+                        <label for="param-gamma-tar">γ_tar (dB):</label>
+                        <input type="number" id="param-gamma-tar" value="10" min="-5" max="30" step="1" onchange="updateSnapshot()">
+                    </div>
+                    <div>
+                        <label for="param-gamma-min">γ_min (dB):</label>
+                        <input type="number" id="param-gamma-min" value="-10" min="-30" max="5" step="1" onchange="updateSnapshot()">
+                    </div>
+                    <div>
+                        <label for="param-gamma-max">γ_max (dB):</label>
+                        <input type="number" id="param-gamma-max" value="20" min="5" max="40" step="1" onchange="updateSnapshot()">
+                    </div>
+                </div>
+                <div class="grid-2">
+                    <div>
+                        <label for="param-mu-step">Passo μ (dB):</label>
+                        <input type="number" id="param-mu-step" value="1.0" min="0.1" max="5.0" step="0.1" onchange="updateSnapshot()">
+                    </div>
+                    <div>
+                        <label for="param-tol">Tol. Loop Ext (dB):</label>
+                        <input type="number" id="param-tol" value="0.5" min="0.1" max="3.0" step="0.1" onchange="updateSnapshot()">
+                    </div>
+                </div>
+                <div class="grid-2">
+                    <div>
+                        <label for="param-t-outer">Iter. Loop Externo:</label>
+                        <input type="number" id="param-t-outer" value="50" min="1" max="500" step="1" onchange="updateSnapshot()">
+                    </div>
+                    <div>
+                        <label for="param-t-inner">Iter. Loop Interno:</label>
+                        <input type="number" id="param-t-inner" value="150" min="10" max="5000" step="10" onchange="updateSnapshot()">
+                    </div>
+                </div>
+            </div>
+        </details>
 
         <!-- Camadas do Mapa 3D -->
-        <div class="group-box">
-            <div class="group-title">🗺️ Mapa 3D & Heatmap</div>
-            <div>
-                <label>Métrica do Mapa de Calor:</label>
-                <select id="param-metric" onchange="updateSnapshot()">
-                    <option value="sinr" selected>SINR (dB)</option>
-                    <option value="rsrp">RSRP / Potência (dBm)</option>
-                    <option value="cap">Capacidade (Mbps)</option>
-                    <option value="server">AP Dominante</option>
-                </select>
+        <details class="group-box">
+            <summary>🗺️ Camadas do Mapa 3D & Heatmap</summary>
+            <div class="group-body">
+                <div class="grid-2">
+                    <div>
+                        <label for="param-metric">Métrica Heatmap:</label>
+                        <select id="param-metric" onchange="updateSnapshot()">
+                            <option value="sinr" selected>SINR (dB)</option>
+                            <option value="rsrp">RSRP (dBm)</option>
+                            <option value="cap">Capacidade (Mbps)</option>
+                            <option value="server">AP Dominante</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label for="param-heatmap-res">Resolução Grade:</label>
+                        <select id="param-heatmap-res" onchange="updateSnapshot()">
+                            <option value="25">25×25 (Rápida)</option>
+                            <option value="35">35×35</option>
+                            <option value="45" selected>45×45 (Normal)</option>
+                            <option value="55">55×55</option>
+                            <option value="75">75×75 (Alta)</option>
+                        </select>
+                    </div>
+                </div>
+                <div>
+                    <label for="param-opacity">Opacidade do Mapa:</label>
+                    <input type="range" id="param-opacity" min="10" max="100" value="75" onchange="updateSnapshot()">
+                </div>
+                <label class="checkbox-row"><input type="checkbox" id="chk-heatmap" checked onchange="updateSnapshot()"><span>Exibir Mapa de Cobertura</span></label>
+                <label class="checkbox-row"><input type="checkbox" id="chk-beams" checked onchange="updateSnapshot()"><span>Exibir Feixes das Antenas</span></label>
+                <label class="checkbox-row"><input type="checkbox" id="chk-links" checked onchange="updateSnapshot()"><span>Exibir Enlaces UE ↔ AP</span></label>
+                <label class="checkbox-row"><input type="checkbox" id="chk-towers" checked onchange="updateSnapshot()"><span>Exibir Torres dos APs</span></label>
+                <label class="checkbox-row"><input type="checkbox" id="chk-ues" checked onchange="updateSnapshot()"><span>Exibir Usuários (UEs)</span></label>
             </div>
-            <div>
-                <label>Opacidade do Mapa:</label>
-                <input type="range" id="param-opacity" min="10" max="100" value="75" oninput="updateSnapshot()">
+        </details>
+
+        <!-- Experimento Monte Carlo -->
+        <details class="group-box" open>
+            <summary>🎲 Experimento Monte Carlo</summary>
+            <div class="group-body">
+                <div class="grid-2">
+                    <div>
+                        <label for="param-mc-scope">Escopo KPIs:</label>
+                        <select id="param-mc-scope">
+                            <option value="both" selected>Completo (Antenas + Potência)</option>
+                            <option value="antennas">Apenas Antenas</option>
+                            <option value="power">Apenas Controle de Potência</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label for="param-sim">Iterações:</label>
+                        <input type="number" id="param-sim" value="100" min="5" max="5000" step="1">
+                    </div>
+                </div>
             </div>
-            <label class="checkbox-row">
-                <input type="checkbox" id="chk-heatmap" checked onchange="updateSnapshot()">
-                <span>Exibir Mapa de Cobertura</span>
-            </label>
-            <label class="checkbox-row">
-                <input type="checkbox" id="chk-beams" checked onchange="updateSnapshot()">
-                <span>Exibir Feixes das Antenas</span>
-            </label>
-            <label class="checkbox-row">
-                <input type="checkbox" id="chk-links" checked onchange="updateSnapshot()">
-                <span>Exibir Enlaces UE ↔ AP</span>
-            </label>
-        </div>
+        </details>
 
         <!-- Ações -->
-        <div style="display:flex; flex-direction:column; gap:8px;">
+        <div style="display:flex; flex-direction:column; gap:7px; padding-bottom:8px;">
             <button class="btn btn-primary" id="btn-simulate" onclick="runSimulation()">🚀 Executar Simulação Monte Carlo</button>
             <button class="btn btn-accent" onclick="updateSnapshot()">🎲 Gerar Novo Cenário 3D</button>
+            <button class="btn" onclick="showSnapshotKpis()">📊 Ver KPIs deste Cenário 3D</button>
         </div>
     </div>
 
@@ -526,14 +870,64 @@ class SimulatorWebHandler(SimpleHTTPRequestHandler):
 
             <!-- Aba 3: Mobilidade -->
             <div id="tab-mobility" class="tab-pane">
+                <div class="mobility-toolbar">
+                    <div class="mobility-field">
+                        <label for="mob-v">Velocidade:</label>
+                        <select id="mob-v" onchange="loadMobility()">
+                            <option value="3">Pedestrian (3 km/h)</option>
+                            <option value="50">Urban (50 km/h)</option>
+                            <option value="120" selected>Highway (120 km/h)</option>
+                        </select>
+                    </div>
+                    <div class="mobility-field">
+                        <label for="mob-dt">Atualização (ΔT):</label>
+                        <select id="mob-dt" onchange="loadMobility()">
+                            <option value="0.010">10 ms (Rápido / High)</option>
+                            <option value="0.050">50 ms (Médio / Fair)</option>
+                            <option value="0.100" selected>100 ms (Lento / Slow)</option>
+                        </select>
+                    </div>
+                    <div class="mobility-field">
+                        <label for="mob-D">Distância (D):</label>
+                        <select id="mob-D" onchange="loadMobility()">
+                            <option value="25">25 m</option>
+                            <option value="50" selected>50 m</option>
+                            <option value="75">75 m</option>
+                            <option value="150">150 m</option>
+                        </select>
+                    </div>
+                    <div class="mobility-field">
+                        <label for="mob-L">Elementos ULA (L):</label>
+                        <select id="mob-L" onchange="loadMobility()">
+                            <option value="8">L = 8</option>
+                            <option value="16" selected>L = 16</option>
+                            <option value="32">L = 32</option>
+                        </select>
+                    </div>
+                    <button class="btn btn-accent" onclick="loadMobility()">🔄 Atualizar</button>
+                </div>
                 <iframe id="iframe-mobility"></iframe>
             </div>
 
             <!-- Aba 4: Tabela -->
             <div id="tab-users" class="tab-pane" style="padding:16px;">
-                <div style="margin-bottom:12px; display:flex; justify-content:space-between; align-items:center;">
-                    <h3 style="color:#38bdf8;">Inspeção de Usuários Conectados</h3>
-                    <button class="btn" onclick="exportTableCSV()">📥 Exportar CSV</button>
+                <div style="margin-bottom:12px; display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
+                    <div>
+                        <h3 style="color:#38bdf8;">Inspeção de Usuários Conectados</h3>
+                        <span id="users-summary" style="font-size:11px; color:#94a3b8;">Aguardando cenário...</span>
+                    </div>
+                    <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                        <select id="mc-round-select" onchange="onMcRoundSelectChange()" style="width:auto; min-width:225px;">
+                            <option value="snapshot">📍 Cenário 3D Atual (Snapshot)</option>
+                        </select>
+                        <div id="mc-round-nav" style="display:none; align-items:center; gap:4px;">
+                            <button class="btn" style="padding:5px 9px;" onclick="stepMcRound(-1)" title="Rodada anterior">◀</button>
+                            <input type="number" id="mc-round-num" min="1" value="1" onchange="loadSpecificMcRound(this.value)" style="width:74px; text-align:center;" title="Número da rodada">
+                            <button class="btn" style="padding:5px 9px;" onclick="stepMcRound(1)" title="Próxima rodada">▶</button>
+                            <button class="btn btn-accent" style="padding:5px 10px;" onclick="viewInspectedRoundIn3D()" title="Carregar esta rodada na Visão 3D">🌐 Ver esta Rodada no 3D</button>
+                        </div>
+                        <button class="btn" onclick="exportTableCSV()">📥 Exportar CSV</button>
+                    </div>
                 </div>
                 <div style="overflow-x:auto;">
                     <table id="users-table">
@@ -563,30 +957,77 @@ class SimulatorWebHandler(SimpleHTTPRequestHandler):
 
     <script>
         let currentSnapshot = null;
+        let currentSnapshotKpiHtml = "";
+        let hasMonteCarloKpis = false;
         let isSimulating = false;
+        let currentMcRounds = null;
+        let currentMcParams = null;
+        let currentInspectedSeed = null;
+        let currentTableSourceLabel = "📍 Cenário 3D Atual";
+        let displayedUsers = [];
+
+        function numOr(id, fallback) {
+            const v = parseFloat(document.getElementById(id).value);
+            return Number.isFinite(v) ? v : fallback;
+        }
+
+        function intOr(id, fallback) {
+            const v = parseInt(document.getElementById(id).value);
+            return Number.isFinite(v) ? v : fallback;
+        }
 
         function getParams() {
             return {
-                M: parseInt(document.getElementById('param-M').value),
-                K: parseInt(document.getElementById('param-K').value),
-                N: parseInt(document.getElementById('param-N').value),
+                M: intOr('param-M', 4),
+                K: intOr('param-K', 8),
+                N: intOr('param-N', 1),
+                allocation: document.getElementById('param-allocation').value,
+                h_ap: numOr('param-h-ap', 25.0),
+                h_ue: numOr('param-h-ue', 1.5),
+                seed: intOr('param-seed', -1),
                 model: document.getElementById('param-model').value,
-                L: parseInt(document.getElementById('param-L').value),
-                J: parseInt(document.getElementById('param-J').value),
+                L: intOr('param-L', 8),
+                J: intOr('param-J', 8),
+                aoa_err_deg: numOr('param-aoa-err', 0.0),
+                beamwidth_deg: numOr('param-beamwidth', 120.0),
+                g_min: numOr('param-g-min', 0.01),
+                b_total_mhz: numOr('param-bw', 100.0),
+                pathloss_exp: numOr('param-pathloss', 4.0),
+                k_const: numOr('param-k-const', 1e-4),
+                d_0: numOr('param-d0', 1.0),
+                k_0: numOr('param-k0', 1e-20),
+                sigma_x: numOr('param-sigma-x', 2.0),
+                sigma_r: numOr('param-sigma-r', 0.7071),
                 use_rayleigh: document.getElementById('param-rayleigh').checked,
                 power_mode: document.getElementById('param-power').value,
+                p_max_dbm: numOr('param-p-max', 30.0),
+                p_min_dbm: numOr('param-p-min', 0.0),
+                gamma_tar_db: numOr('param-gamma-tar', 10.0),
+                gamma_min_db: numOr('param-gamma-min', -10.0),
+                gamma_max_db: numOr('param-gamma-max', 20.0),
+                mu_step_db: numOr('param-mu-step', 1.0),
+                tol_db: numOr('param-tol', 0.5),
+                t_outer: intOr('param-t-outer', 50),
+                t_inner: intOr('param-t-inner', 150),
                 heatmap_metric: document.getElementById('param-metric').value,
-                opacity: parseInt(document.getElementById('param-opacity').value),
+                heatmap_res: intOr('param-heatmap-res', 45),
+                opacity: intOr('param-opacity', 75),
                 show_heatmap: document.getElementById('chk-heatmap').checked,
                 show_beams: document.getElementById('chk-beams').checked,
                 show_links: document.getElementById('chk-links').checked,
-                show_towers: true,
-                show_ues: true,
-                heatmap_res: 45,
-                h_ap: 25.0,
-                h_ue: 1.5,
-                sim: 100
+                show_towers: document.getElementById('chk-towers').checked,
+                show_ues: document.getElementById('chk-ues').checked,
+                mc_scope: document.getElementById('param-mc-scope').value,
+                sim: Math.max(5, Math.min(5000, intOr('param-sim', 100)))
             };
+        }
+
+        function formatFetchError(err) {
+            const msg = (err && err.message) ? err.message : String(err || 'Erro desconhecido');
+            if (/failed to fetch|networkerror|load failed/i.test(msg)) {
+                return "Servidor local offline (http://127.0.0.1:8050). Verifique se o terminal do run_web.bat está em execução.";
+            }
+            return msg;
         }
 
         function setStatus(text, loading = false) {
@@ -597,8 +1038,8 @@ class SimulatorWebHandler(SimpleHTTPRequestHandler):
         async function updateSnapshot() {
             if (isSimulating) return;
             setStatus("Calculando novo cenário 3D...", true);
-            const params = getParams();
             try {
+                const params = getParams();
                 const res = await fetch('/api/snapshot', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
@@ -610,33 +1051,63 @@ class SimulatorWebHandler(SimpleHTTPRequestHandler):
                 }
                 const data = await res.json();
                 currentSnapshot = data.snapshot;
+                currentSnapshotKpiHtml = data.snapshot_kpi_html || "";
 
-                // Atualiza iframe 3D
-                const iframe = document.getElementById('iframe-3d');
-                iframe.srcdoc = data.html_3d;
+                document.getElementById('iframe-3d').srcdoc = data.html_3d;
+                if (!hasMonteCarloKpis && currentSnapshotKpiHtml) {
+                    document.getElementById('iframe-kpi').srcdoc = currentSnapshotKpiHtml;
+                }
 
-                // Atualiza tabela
+                const roundSel = document.getElementById('mc-round-select');
+                if (roundSel) roundSel.value = 'snapshot';
+                currentTableSourceLabel = "📍 Cenário 3D Atual";
+                currentInspectedSeed = (currentSnapshot.params && currentSnapshot.params.seed >= 0) ? currentSnapshot.params.seed : null;
                 renderUsersTable(currentSnapshot.ues);
 
                 setStatus(`Cenário 3D atualizado! M=${params.M} APs | K=${params.K} UEs`);
-                document.getElementById('status-info').innerText = 
+                document.getElementById('status-info').innerText =
                     `SINR Médio: ${currentSnapshot.avg_sinr.toFixed(1)} dB | Vazão Total: ${currentSnapshot.sum_capacity.toFixed(1)} Mbps`;
             } catch (err) {
                 console.error(err);
-                setStatus("Erro ao atualizar cenário: " + err.message);
+                setStatus("Erro ao atualizar cenário: " + formatFetchError(err));
             }
+        }
+
+        function showSnapshotKpis() {
+            if (!currentSnapshotKpiHtml) return;
+            hasMonteCarloKpis = false;
+            document.getElementById('iframe-kpi').srcdoc = currentSnapshotKpiHtml;
+            switchTab(1);
+            setStatus("Exibindo KPIs instantâneos do cenário 3D atual.");
         }
 
         async function runSimulation() {
             if (isSimulating) return;
             isSimulating = true;
             const btn = document.getElementById('btn-simulate');
+            const loadingSpan = document.querySelector('#ux-loading span');
             btn.disabled = true;
             btn.innerText = "⏳ Simulando...";
             setStatus("Executando Simulação Monte Carlo (calculando estatísticas)...", true);
 
-            const params = getParams();
+            const pollTimer = setInterval(async () => {
+                if (!isSimulating) return;
+                try {
+                    const pr = await fetch('/api/progress', { cache: 'no-store' });
+                    if (!pr.ok || !isSimulating) return;
+                    const p = await pr.json();
+                    if (!isSimulating || !p || !p.running) return;
+                    const secText = Number.isFinite(p.elapsed_s) ? `${p.elapsed_s.toFixed(1)}s` : '0.0s';
+                    btn.innerText = `⏳ Simulando... ${p.pct}%`;
+                    setStatus(`${p.msg} (${secText})`, true);
+                    if (loadingSpan) {
+                        loadingSpan.innerText = `⏳ ${p.msg} (${secText})`;
+                    }
+                } catch (_) {}
+            }, 400);
+
             try {
+                const params = getParams();
                 const res = await fetch('/api/simulate', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
@@ -647,40 +1118,187 @@ class SimulatorWebHandler(SimpleHTTPRequestHandler):
                     throw new Error(errData.error || `HTTP ${res.status}`);
                 }
                 const data = await res.json();
+                isSimulating = false;
+                clearInterval(pollTimer);
+
+                hasMonteCarloKpis = true;
                 document.getElementById('iframe-kpi').srcdoc = data.kpi_html;
-                switchTab(1); // Vai para aba de KPIs
-                setStatus("Simulação Monte Carlo concluída com sucesso!");
+                if (data.mc_rounds) {
+                    currentMcRounds = data.mc_rounds;
+                    currentMcParams = params;
+                    populateMcRoundsUI(data.mc_rounds);
+                }
+                switchTab(1);
+                setStatus("Simulação Monte Carlo concluída com sucesso!", false);
             } catch (err) {
+                isSimulating = false;
+                clearInterval(pollTimer);
                 console.error("Erro na simulação:", err);
-                setStatus("Erro na simulação: " + err.message);
+                setStatus("Erro na simulação: " + formatFetchError(err), false);
             } finally {
+                clearInterval(pollTimer);
                 isSimulating = false;
                 btn.disabled = false;
                 btn.innerText = "🚀 Executar Simulação Monte Carlo";
+                if (loadingSpan) {
+                    loadingSpan.innerText = "⏳ Processando…";
+                }
             }
         }
 
         async function loadMobility() {
+            setStatus("Calculando análise de mobilidade e beam tracking...", true);
+            const payload = {
+                v_kmh: parseFloat(document.getElementById('mob-v').value),
+                dt: parseFloat(document.getElementById('mob-dt').value),
+                D: parseFloat(document.getElementById('mob-D').value),
+                L: parseInt(document.getElementById('mob-L').value)
+            };
             try {
                 const res = await fetch('/api/mobility', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({v_kmh: 120, dt: 0.100, D: 50, L: 16})
+                    body: JSON.stringify(payload)
                 });
+                if (!res.ok) {
+                    const errData = await res.json().catch(() => ({}));
+                    throw new Error(errData.error || `HTTP ${res.status}`);
+                }
                 const data = await res.json();
                 document.getElementById('iframe-mobility').srcdoc = data.mobility_html;
+                setStatus(`Mobilidade atualizada: v=${payload.v_kmh} km/h | ΔT=${payload.dt * 1000} ms | D=${payload.D} m | L=${payload.L}`);
             } catch (err) {
                 console.error(err);
+                setStatus("Erro ao carregar mobilidade: " + formatFetchError(err));
             }
         }
 
+        function populateMcRoundsUI(mc) {
+            const sel = document.getElementById('mc-round-select');
+            const nav = document.getElementById('mc-round-nav');
+            const numInput = document.getElementById('mc-round-num');
+            if (!sel || !mc || !mc.presets) return;
+
+            const p = mc.presets;
+            sel.innerHTML = `
+                <option value="snapshot">📍 Cenário 3D Atual (Snapshot)</option>
+                <option value="first">1ª Rodada (#${p.first.round}) — ${p.first.sum_capacity.toFixed(0)} Mbps</option>
+                <option value="last">Última Rodada (#${p.last.round}) — ${p.last.sum_capacity.toFixed(0)} Mbps</option>
+                <option value="best">🏆 Melhor Rodada (#${p.best.round}) — ${p.best.sum_capacity.toFixed(0)} Mbps</option>
+                <option value="median">⚖️ Rodada Mediana (#${p.median.round}) — ${p.median.sum_capacity.toFixed(0)} Mbps</option>
+                <option value="worst">⚠️ Pior Rodada (#${p.worst.round}) — ${p.worst.sum_capacity.toFixed(0)} Mbps</option>
+                <option value="custom">🔎 Rodada específica (#1..#${mc.sim})</option>
+            `;
+            numInput.min = 1;
+            numInput.max = mc.sim;
+            nav.style.display = 'flex';
+            sel.value = 'last';
+            onMcRoundSelectChange();
+        }
+
+        function onMcRoundSelectChange() {
+            const sel = document.getElementById('mc-round-select');
+            if (!sel) return;
+            const val = sel.value;
+
+            if (val === 'snapshot') {
+                if (currentSnapshot) {
+                    currentTableSourceLabel = "📍 Cenário 3D Atual";
+                    currentInspectedSeed = (currentSnapshot.params && currentSnapshot.params.seed >= 0) ? currentSnapshot.params.seed : null;
+                    renderUsersTable(currentSnapshot.ues);
+                }
+                return;
+            }
+            if (val === 'custom') {
+                loadSpecificMcRound(document.getElementById('mc-round-num').value);
+                return;
+            }
+            if (currentMcRounds && currentMcRounds.presets && currentMcRounds.presets[val]) {
+                const r = currentMcRounds.presets[val];
+                const names = {
+                    first: '1ª Rodada',
+                    last: 'Última Rodada',
+                    best: '🏆 Melhor Rodada',
+                    median: '⚖️ Rodada Mediana',
+                    worst: '⚠️ Pior Rodada'
+                };
+                currentTableSourceLabel = `${names[val] || val} (#${r.round}/${currentMcRounds.sim})`;
+                currentInspectedSeed = r.seed;
+                document.getElementById('mc-round-num').value = r.round;
+                renderUsersTable(r.ues);
+            }
+        }
+
+        function stepMcRound(delta) {
+            if (!currentMcRounds) return;
+            const cur = intOr('mc-round-num', 1);
+            const next = Math.max(1, Math.min(currentMcRounds.sim, cur + delta));
+            loadSpecificMcRound(next);
+        }
+
+        async function loadSpecificMcRound(roundVal) {
+            if (!currentMcRounds) return;
+            const roundNum = Math.max(1, Math.min(currentMcRounds.sim, parseInt(roundVal) || 1));
+            document.getElementById('mc-round-num').value = roundNum;
+            document.getElementById('mc-round-select').value = 'custom';
+            setStatus(`Carregando rodada #${roundNum}/${currentMcRounds.sim}...`, true);
+            try {
+                const baseParams = currentMcParams || getParams();
+                const res = await fetch('/api/mc_round', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ ...baseParams, round: roundNum, base_seed: currentMcRounds.base_seed })
+                });
+                if (!res.ok) {
+                    const errData = await res.json().catch(() => ({}));
+                    throw new Error(errData.error || `HTTP ${res.status}`);
+                }
+                const data = await res.json();
+                currentTableSourceLabel = `🔎 Rodada #${data.round}/${currentMcRounds.sim}`;
+                currentInspectedSeed = data.seed;
+                renderUsersTable(data.ues);
+                setStatus(`Rodada #${data.round} exibida na Tabela de Usuários.`);
+            } catch (err) {
+                console.error(err);
+                setStatus("Erro ao carregar rodada: " + formatFetchError(err));
+            }
+        }
+
+        function viewInspectedRoundIn3D() {
+            if (currentInspectedSeed === null || !Number.isFinite(currentInspectedSeed)) return;
+            const seedEl = document.getElementById('param-seed');
+            if (seedEl) seedEl.value = currentInspectedSeed;
+            updateSnapshot();
+            switchTab(0);
+        }
+
         function renderUsersTable(ues) {
+            displayedUsers = ues || [];
             const tbody = document.getElementById('users-tbody');
             tbody.innerHTML = '';
             if (!ues) return;
+
+            let activeCnt = 0;
+            let offCnt = 0;
+            let sumCap = 0;
+            let activeSinrSum = 0;
+
             ues.forEach(u => {
                 const tr = document.createElement('tr');
-                const sColor = u.sinr_db >= 10 ? '#34d399' : (u.sinr_db >= 0 ? '#fbbf24' : '#f87171');
+                const isOff = (u.active === false) || (u.power_w <= 0);
+                if (isOff) {
+                    offCnt++;
+                } else {
+                    activeCnt++;
+                    sumCap += u.cap_mbps;
+                    activeSinrSum += u.sinr_db;
+                }
+                const sColor = isOff ? '#ef4444' : (u.sinr_db >= 10 ? '#34d399' : (u.sinr_db >= 0 ? '#fbbf24' : '#f87171'));
+                const pDbmText = isOff ? 'Desligado' : u.power_dbm.toFixed(1);
+                const sinrText = isOff ? 'Desligado (&lt; limiar)' : `${u.sinr_db > 0 ? '+' : ''}${u.sinr_db.toFixed(1)} dB`;
+                const capText = isOff ? '0.00 Mbps' : `${u.cap_mbps.toFixed(2)} Mbps`;
+                const statusText = isOff ? 'Outage (Desligado)' : u.status;
+                const statusStyle = (isOff || (u.status && u.status.startsWith('Outage'))) ? 'color:#ef4444; font-weight:bold;' : '';
                 tr.innerHTML = `
                     <td>UE ${u.id}</td>
                     <td>(${u.x.toFixed(0)}, ${u.y.toFixed(0)}) m</td>
@@ -690,13 +1308,17 @@ class SimulatorWebHandler(SimpleHTTPRequestHandler):
                     <td>${u.beam}</td>
                     <td>${u.channel}</td>
                     <td>${u.power_w.toFixed(4)}</td>
-                    <td>${u.power_dbm.toFixed(1)}</td>
-                    <td style="color:${sColor}; font-weight:bold;">${u.sinr_db > 0 ? '+' : ''}${u.sinr_db.toFixed(1)} dB</td>
-                    <td>${u.cap_mbps.toFixed(2)} Mbps</td>
-                    <td>${u.status}</td>
+                    <td>${pDbmText}</td>
+                    <td style="color:${sColor}; font-weight:bold;">${sinrText}</td>
+                    <td>${capText}</td>
+                    <td style="${statusStyle}">${statusText}</td>
                 `;
                 tbody.appendChild(tr);
             });
+
+            const avgSinr = activeCnt > 0 ? (activeSinrSum / activeCnt) : 0;
+            document.getElementById('users-summary').innerText =
+                `[${currentTableSourceLabel}] | Total: ${ues.length} UEs (${activeCnt} ativos, ${offCnt} desligados) | SINR Médio (ativos): ${avgSinr >= 0 ? '+' : ''}${avgSinr.toFixed(1)} dB | Vazão: ${sumCap.toFixed(1)} Mbps`;
         }
 
         function switchTab(idx) {
@@ -707,12 +1329,19 @@ class SimulatorWebHandler(SimpleHTTPRequestHandler):
             if (idx === 2 && !document.getElementById('iframe-mobility').srcdoc) {
                 loadMobility();
             }
+            if (idx === 1) {
+                const kpiIframe = document.getElementById('iframe-kpi');
+                if (kpiIframe && kpiIframe.contentWindow) {
+                    try { kpiIframe.contentWindow.dispatchEvent(new Event('resize')); } catch (e) {}
+                }
+            }
         }
 
         function exportTableCSV() {
-            if (!currentSnapshot || !currentSnapshot.ues) return;
+            const rows = (displayedUsers && displayedUsers.length) ? displayedUsers : (currentSnapshot ? currentSnapshot.ues : null);
+            if (!rows) return;
             let csv = "UE_ID,X_m,Y_m,AP_ID,Distancia_m,Azimute_deg,Feixe,Canal,Potencia_W,Potencia_dBm,SINR_dB,Capacidade_Mbps,Status\\n";
-            currentSnapshot.ues.forEach(u => {
+            rows.forEach(u => {
                 csv += `${u.id},${u.x},${u.y},${u.ap_id},${u.dist},${u.angle_deg},${u.beam},${u.channel},${u.power_w},${u.power_dbm},${u.sinr_db},${u.cap_mbps},${u.status}\\n`;
             });
             const blob = new Blob([csv], { type: 'text/csv' });
@@ -723,7 +1352,6 @@ class SimulatorWebHandler(SimpleHTTPRequestHandler):
             a.click();
         }
 
-        // Inicialização
         window.onload = () => {
             updateSnapshot();
         };
@@ -732,16 +1360,32 @@ class SimulatorWebHandler(SimpleHTTPRequestHandler):
 </html>"""
 
 
-def start_server():
-    server = ThreadingHTTPServer(("127.0.0.1", PORT), SimulatorWebHandler)
-    print(f"\n========================================================")
-    print(f" Servidor Web Ultraleve Iniciado com Sucesso!")
-    print(f" URL: http://127.0.0.1:{PORT}")
-    print(f" Consumo de RAM estimado: ~35 MB (super leve)")
-    print(f" Pressione Ctrl+C no terminal para encerrar o servidor.")
-    print(f"========================================================\n")
+class _LocalWebServer(ThreadingHTTPServer):
+    allow_reuse_address = False
 
-    # Abre o navegador padrão automaticamente após 0.8s
+
+def start_server():
+    try:
+        server = _LocalWebServer(("127.0.0.1", PORT), SimulatorWebHandler)
+    except OSError as exc:
+        print("\n========================================================")
+        print(f" [AVISO] A porta {PORT} já está em uso por outro terminal!")
+        print(f" Detalhe: {exc}")
+        print(f" Abrindo http://127.0.0.1:{PORT} no navegador...")
+        print(" Se você atualizou o código, feche o terminal antigo antes")
+        print(" de abrir o run_web.bat novamente.")
+        print("========================================================\n", flush=True)
+        webbrowser.open(f"http://127.0.0.1:{PORT}")
+        return
+
+    print("\n========================================================")
+    print(" Servidor Web Ultraleve Iniciado com Sucesso!")
+    print(f" URL: http://127.0.0.1:{PORT}")
+    print(" Consumo de RAM estimado: ~35 MB (super leve)")
+    print(" Pressione Ctrl+C no terminal para encerrar o servidor.")
+    print(" Acompanhe abaixo os logs em tempo real das simulações:")
+    print("========================================================\n", flush=True)
+
     def open_browser():
         time.sleep(0.8)
         webbrowser.open(f"http://127.0.0.1:{PORT}")
@@ -751,7 +1395,7 @@ def start_server():
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        print("\nServidor encerrado pelo usuário.")
+        print("\nServidor encerrado pelo usuário.", flush=True)
         server.server_close()
 
 

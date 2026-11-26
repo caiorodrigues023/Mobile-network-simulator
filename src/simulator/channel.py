@@ -42,25 +42,28 @@ def angle_matrix(ue_xy, ap_xy) -> np.ndarray:
 # ---------------------------------------------------------------------------
 
 
-def gerar_shadowing(K, M) -> np.ndarray:
+def gerar_shadowing(K, M, sigma_x: float = SIGMA_X) -> np.ndarray:
     """
     Sorteia o shadowing log-normal de forma independente para cada link (UE, AP).
     Aceita inteiros K, M ou listas de entidades.
+    Se sigma_x <= 0, retorna matriz de 1.0 (sem sombreamento).
     """
     n_k = len(K) if hasattr(K, "__len__") else int(K)
     n_m = len(M) if hasattr(M, "__len__") else int(M)
-    return np.random.lognormal(0, SIGMA_X, size=(n_k, n_m))
+    if sigma_x <= 0.0:
+        return np.ones((n_k, n_m), dtype=float)
+    return np.random.lognormal(0, sigma_x, size=(n_k, n_m))
 
 
-def gerar_rayleigh(K, M) -> np.ndarray:
+def gerar_rayleigh(K, M, sigma_r: float = SIGMA_R) -> np.ndarray:
     """
     Sorteia o fading de Rayleigh de forma independente para cada link (UE, AP).
     Aceita inteiros K, M ou listas de entidades.
     """
     n_k = len(K) if hasattr(K, "__len__") else int(K)
     n_m = len(M) if hasattr(M, "__len__") else int(M)
-    x1 = np.random.normal(0, SIGMA_R, size=(n_k, n_m))
-    x2 = np.random.normal(0, SIGMA_R, size=(n_k, n_m))
+    x1 = np.random.normal(0, sigma_r, size=(n_k, n_m))
+    x2 = np.random.normal(0, sigma_r, size=(n_k, n_m))
     return np.sqrt(x1**2 + x2**2)
 
 
@@ -75,9 +78,14 @@ def gain_matrix(
     G: np.ndarray,
     shadowing: Optional[np.ndarray] = None,  # noqa
     use_rayleigh: bool = False,
+    pathloss_exp: float = PATHLOSS_EXP,
+    k_const: float = K_CONST,
+    d_0: float = D_0,
+    sigma_x: float = SIGMA_X,
+    sigma_r: float = SIGMA_R,
 ) -> np.ndarray:
     """
-    Calcula a matriz de ganho de canal combinando path loss (d⁻⁴),
+    Calcula a matriz de ganho de canal combinando path loss (d⁻ⁿ),
     shadowing log-normal, fast fading opcional e ganho de antena G.
     Aceita matrizes de coordenadas ou listas de UEs/APs.
     """
@@ -86,20 +94,20 @@ def gain_matrix(
     K, M = ue_coords.shape[0], ap_coords.shape[0]
 
     if shadowing is None:
-        shadowing = gerar_shadowing(K, M)
+        shadowing = gerar_shadowing(K, M, sigma_x=sigma_x)
     if shadowing.ndim == 2:
         shadowing = shadowing[:, :, None]
 
     rayleigh = 1.0
     if use_rayleigh:
-        rayleigh = gerar_rayleigh(K, M)[:, :, None]
+        rayleigh = gerar_rayleigh(K, M, sigma_r=sigma_r)[:, :, None]
 
     # Distância Euclidiana (K, M)
     dx = ue_coords[:, None, 0] - ap_coords[None, :, 0]
     dy = ue_coords[:, None, 1] - ap_coords[None, :, 1]
-    d = np.maximum(np.sqrt(dx**2 + dy**2), D_0)
+    d = np.maximum(np.sqrt(dx**2 + dy**2), d_0)
 
-    return shadowing * (rayleigh**2) * K_CONST / (d[:, :, None] ** PATHLOSS_EXP) * G
+    return shadowing * (rayleigh**2) * k_const / (d[:, :, None] ** pathloss_exp) * G
 
 
 # ---------------------------------------------------------------------------

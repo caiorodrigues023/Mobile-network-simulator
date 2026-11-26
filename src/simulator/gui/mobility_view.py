@@ -264,12 +264,12 @@ def generate_mobility_html(
 
 
 # ---------------------------------------------------------------------------
-# Widget Qt — só é importado quando o modo desktop (PyQt6) está ativo
+# Widget Qt — carregamento preguiçoso apenas quando usado pelo modo desktop
 # ---------------------------------------------------------------------------
-try:
+def _build_mobility_view_class():
     from PyQt6.QtWidgets import (
         QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox,
-        QDoubleSpinBox, QSpinBox, QPushButton, QGroupBox
+        QPushButton, QGroupBox
     )
     from PyQt6.QtWebEngineWidgets import QWebEngineView
 
@@ -353,7 +353,12 @@ try:
             html = generate_mobility_html(v_kmh, T_update, D, L_sel)
             self.webview.setHtml(html)
 
-except ImportError:
-    # PyQt6 não disponível — a classe MobilityView não será definida,
-    # mas generate_mobility_html() continua funcionando.
-    pass
+    return MobilityView
+
+
+def __getattr__(name: str):
+    if name == "MobilityView":
+        cls = _build_mobility_view_class()
+        globals()["MobilityView"] = cls
+        return cls
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

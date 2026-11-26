@@ -2,24 +2,22 @@
 # src/simulator/gui/main_window.py — Janela Principal da Interface Gráfica
 # ---------------------------------------------------------------------------
 
-import os
-import sys
 import time
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import (
-    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
-    QTabWidget, QGroupBox, QLabel, QComboBox, QSpinBox, QDoubleSpinBox,
-    QCheckBox, QPushButton, QSlider, QProgressBar, QStatusBar,
-    QScrollArea, QFileDialog, QMessageBox, QTextEdit, QPlainTextEdit
+    QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QGridLayout,
+    QGroupBox, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMessageBox,
+    QPlainTextEdit, QProgressBar, QPushButton, QScrollArea, QSlider,
+    QSpinBox, QSplitter, QStatusBar, QTabWidget, QVBoxLayout, QWidget,
 )
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 
-from .styles import MODERN_DARK_THEME
-from .worker import MonteCarloWorker, SnapshotCalculator
-from .view3d import View3DGenerator
 from .kpi_view import KPIViewGenerator
-from .users_table import UsersTableView
 from .mobility_view import MobilityView
+from .styles import MODERN_DARK_THEME
+from .users_table import UsersTableView
+from .view3d import View3DGenerator
+from .worker import MonteCarloWorker, SnapshotCalculator
 
 
 class SimulatorMainWindow(QMainWindow):
@@ -28,7 +26,7 @@ class SimulatorMainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Mobile Network Simulator 3D — Simulador de Redes Móveis")
-        self.resize(1380, 880)
+        self.resize(1420, 900)
         self.setMinimumSize(1100, 700)
 
         # Estado da aplicação
@@ -56,99 +54,275 @@ class SimulatorMainWindow(QMainWindow):
         splitter = QSplitter(Qt.Orientation.Horizontal)
 
         # -------------------------------------------------------------------
-        # Painel Lateral Esquerdo (Controles de Simulação)
+        # Painel Lateral Esquerdo (Controles Completos de Simulação)
         # -------------------------------------------------------------------
         sidebar_scroll = QScrollArea()
         sidebar_scroll.setWidgetResizable(True)
-        sidebar_scroll.setFixedWidth(360)
+        sidebar_scroll.setFixedWidth(380)
 
         sidebar_content = QWidget()
         sidebar_layout = QVBoxLayout(sidebar_content)
         sidebar_layout.setContentsMargins(10, 10, 10, 10)
-        sidebar_layout.setSpacing(12)
+        sidebar_layout.setSpacing(10)
 
-        # 1. Topologia da Rede
-        grp_topo = QGroupBox("📐 Topologia da Rede")
-        lay_topo = QVBoxLayout(grp_topo)
+        # 1. Topologia da Rede e Alocação
+        grp_topo = QGroupBox("📐 Topologia & Alocação")
+        lay_topo = QGridLayout(grp_topo)
 
-        lay_topo.addWidget(QLabel("Número de APs (M):"))
+        lay_topo.addWidget(QLabel("APs (M):"), 0, 0)
         self.combo_aps = QComboBox()
-        self.combo_aps.addItem("4 APs (Grade 2×2)", 4)
-        self.combo_aps.addItem("9 APs (Grade 3×3)", 9)
-        self.combo_aps.addItem("16 APs (Grade 4×4)", 16)
+        for m_val, g_lbl in ((4, "4 (2×2)"), (9, "9 (3×3)"), (16, "16 (4×4)"), (25, "25 (5×5)"), (36, "36 (6×6)")):
+            self.combo_aps.addItem(g_lbl, m_val)
         self.combo_aps.currentIndexChanged.connect(self._on_param_changed)
-        lay_topo.addWidget(self.combo_aps)
+        lay_topo.addWidget(self.combo_aps, 0, 1)
 
-        lay_topo.addWidget(QLabel("Número de Usuários (K):"))
+        lay_topo.addWidget(QLabel("Usuários (K):"), 1, 0)
         self.spin_ues = QSpinBox()
         self.spin_ues.setRange(1, 128)
         self.spin_ues.setValue(8)
         self.spin_ues.valueChanged.connect(self._on_param_changed)
-        lay_topo.addWidget(self.spin_ues)
+        lay_topo.addWidget(self.spin_ues, 1, 1)
 
-        lay_topo.addWidget(QLabel("Canais Ortogonais (N):"))
+        lay_topo.addWidget(QLabel("Canais (N):"), 2, 0)
         self.spin_channels = QSpinBox()
         self.spin_channels.setRange(1, 16)
         self.spin_channels.setValue(1)
         self.spin_channels.valueChanged.connect(self._on_param_changed)
-        lay_topo.addWidget(self.spin_channels)
+        lay_topo.addWidget(self.spin_channels, 2, 1)
+
+        lay_topo.addWidget(QLabel("Alocação:"), 3, 0)
+        self.combo_alloc = QComboBox()
+        self.combo_alloc.addItem("Ortogonal intra-AP", "ortogonal")
+        self.combo_alloc.addItem("Aleatória (Random)", "random")
+        self.combo_alloc.currentIndexChanged.connect(self._on_param_changed)
+        lay_topo.addWidget(self.combo_alloc, 3, 1)
+
+        lay_topo.addWidget(QLabel("Altura AP / UE (m):"), 4, 0)
+        h_box = QHBoxLayout()
+        self.spin_h_ap = QDoubleSpinBox()
+        self.spin_h_ap.setRange(5.0, 100.0)
+        self.spin_h_ap.setValue(25.0)
+        self.spin_h_ap.setSingleStep(5.0)
+        self.spin_h_ap.valueChanged.connect(self._on_param_changed)
+        self.spin_h_ue = QDoubleSpinBox()
+        self.spin_h_ue.setRange(0.5, 20.0)
+        self.spin_h_ue.setValue(1.5)
+        self.spin_h_ue.setSingleStep(0.5)
+        self.spin_h_ue.valueChanged.connect(self._on_param_changed)
+        h_box.addWidget(self.spin_h_ap)
+        h_box.addWidget(self.spin_h_ue)
+        lay_topo.addLayout(h_box, 4, 1)
+
+        lay_topo.addWidget(QLabel("Seed (-1 = aleatório):"), 5, 0)
+        self.spin_seed = QSpinBox()
+        self.spin_seed.setRange(-1, 999999)
+        self.spin_seed.setValue(-1)
+        self.spin_seed.valueChanged.connect(self._on_param_changed)
+        lay_topo.addWidget(self.spin_seed, 5, 1)
 
         sidebar_layout.addWidget(grp_topo)
 
-        # 2. Antenas e Feixes (Beamforming)
-        grp_ant = QGroupBox("📡 Tecnologia de Antena & Feixes")
-        lay_ant = QVBoxLayout(grp_ant)
+        # 2. Antenas e Feixes
+        grp_ant = QGroupBox("📡 Antenas & Beamforming")
+        lay_ant = QGridLayout(grp_ant)
 
-        lay_ant.addWidget(QLabel("Modelo de Antena:"))
+        lay_ant.addWidget(QLabel("Modelo:"), 0, 0)
         self.combo_ant_model = QComboBox()
-        self.combo_ant_model.addItem("SMB (Switched Multi-Beam UCA)", "smb")
-        self.combo_ant_model.addItem("Setorizado (3 setores de 120°)", "sector")
+        self.combo_ant_model.addItem("SMB (Switched Multi-Beam)", "smb")
+        self.combo_ant_model.addItem("Setorizado", "sector")
         self.combo_ant_model.addItem("Omnidirecional", "omni")
         self.combo_ant_model.addItem("Adaptativo MRC (Ideal 0°)", "adaptive")
         self.combo_ant_model.addItem("Adaptativo MRC (Erro 1°)", "adaptive_1")
         self.combo_ant_model.addItem("Adaptativo MRC (Erro 5°)", "adaptive_5")
         self.combo_ant_model.addItem("Adaptativo MRC (Erro 10°)", "adaptive_10")
         self.combo_ant_model.currentIndexChanged.connect(self._on_param_changed)
-        lay_ant.addWidget(self.combo_ant_model)
+        lay_ant.addWidget(self.combo_ant_model, 0, 1)
 
-        lay_ant.addWidget(QLabel("Elementos do Arranjo (L):"))
+        lay_ant.addWidget(QLabel("Elementos (L) / Feixes (J):"), 1, 0)
+        lj_box = QHBoxLayout()
         self.combo_l = QComboBox()
-        for l_val in (4, 8, 16, 32):
-            self.combo_l.addItem(f"L = {l_val} elementos", l_val)
-        self.combo_l.setCurrentIndex(1)  # L=8
+        for l_val in (2, 4, 8, 16, 32, 64):
+            self.combo_l.addItem(f"L={l_val}", l_val)
+        self.combo_l.setCurrentIndex(2)  # L=8
         self.combo_l.currentIndexChanged.connect(self._on_param_changed)
-        lay_ant.addWidget(self.combo_l)
-
-        lay_ant.addWidget(QLabel("Feixes SMB (J):"))
         self.combo_j = QComboBox()
-        for j_val in (4, 8, 12, 16):
-            self.combo_j.addItem(f"J = {j_val} feixes", j_val)
+        for j_val in (4, 8, 12, 16, 24, 32):
+            self.combo_j.addItem(f"J={j_val}", j_val)
         self.combo_j.setCurrentIndex(1)  # J=8
         self.combo_j.currentIndexChanged.connect(self._on_param_changed)
-        lay_ant.addWidget(self.combo_j)
+        lj_box.addWidget(self.combo_l)
+        lj_box.addWidget(self.combo_j)
+        lay_ant.addLayout(lj_box, 1, 1)
+
+        lay_ant.addWidget(QLabel("Erro AoA (°) / Abertura (°):"), 2, 0)
+        ang_box = QHBoxLayout()
+        self.spin_aoa_err = QDoubleSpinBox()
+        self.spin_aoa_err.setRange(0.0, 30.0)
+        self.spin_aoa_err.setValue(0.0)
+        self.spin_aoa_err.setSingleStep(1.0)
+        self.spin_aoa_err.valueChanged.connect(self._on_param_changed)
+        self.spin_beamwidth = QDoubleSpinBox()
+        self.spin_beamwidth.setRange(30.0, 360.0)
+        self.spin_beamwidth.setValue(120.0)
+        self.spin_beamwidth.setSingleStep(15.0)
+        self.spin_beamwidth.valueChanged.connect(self._on_param_changed)
+        ang_box.addWidget(self.spin_aoa_err)
+        ang_box.addWidget(self.spin_beamwidth)
+        lay_ant.addLayout(ang_box, 2, 1)
+
+        lay_ant.addWidget(QLabel("Lóbulo Traseiro (g_min):"), 3, 0)
+        self.spin_g_min = QDoubleSpinBox()
+        self.spin_g_min.setRange(0.001, 0.5)
+        self.spin_g_min.setDecimals(3)
+        self.spin_g_min.setSingleStep(0.005)
+        self.spin_g_min.setValue(0.01)
+        self.spin_g_min.valueChanged.connect(self._on_param_changed)
+        lay_ant.addWidget(self.spin_g_min, 3, 1)
 
         sidebar_layout.addWidget(grp_ant)
 
-        # 3. Propagação e Canal
+        # 3. Canal de Propagação & Ruído
         grp_chan = QGroupBox("🌊 Canal & Propagação")
-        lay_chan = QVBoxLayout(grp_chan)
+        lay_chan = QGridLayout(grp_chan)
+
+        lay_chan.addWidget(QLabel("Banda Total (MHz):"), 0, 0)
+        self.spin_bw = QDoubleSpinBox()
+        self.spin_bw.setRange(1.0, 1000.0)
+        self.spin_bw.setValue(100.0)
+        self.spin_bw.setSingleStep(10.0)
+        self.spin_bw.valueChanged.connect(self._on_param_changed)
+        lay_chan.addWidget(self.spin_bw, 0, 1)
+
+        lay_chan.addWidget(QLabel("Pathloss (n) / d₀ (m):"), 1, 0)
+        pl_box = QHBoxLayout()
+        self.spin_pathloss = QDoubleSpinBox()
+        self.spin_pathloss.setRange(2.0, 6.0)
+        self.spin_pathloss.setDecimals(2)
+        self.spin_pathloss.setSingleStep(0.2)
+        self.spin_pathloss.setValue(4.0)
+        self.spin_pathloss.valueChanged.connect(self._on_param_changed)
+        self.spin_d0 = QDoubleSpinBox()
+        self.spin_d0.setRange(0.5, 10.0)
+        self.spin_d0.setSingleStep(0.5)
+        self.spin_d0.setValue(1.0)
+        self.spin_d0.valueChanged.connect(self._on_param_changed)
+        pl_box.addWidget(self.spin_pathloss)
+        pl_box.addWidget(self.spin_d0)
+        lay_chan.addLayout(pl_box, 1, 1)
+
+        lay_chan.addWidget(QLabel("Constante K / Ruído K₀:"), 2, 0)
+        kk_box = QHBoxLayout()
+        self.edit_k_const = QLineEdit("1e-4")
+        self.edit_k_const.editingFinished.connect(self._on_param_changed)
+        self.edit_k_0 = QLineEdit("1e-20")
+        self.edit_k_0.editingFinished.connect(self._on_param_changed)
+        kk_box.addWidget(self.edit_k_const)
+        kk_box.addWidget(self.edit_k_0)
+        lay_chan.addLayout(kk_box, 2, 1)
+
+        lay_chan.addWidget(QLabel("Shadowing σX / σR:"), 3, 0)
+        sig_box = QHBoxLayout()
+        self.spin_sigma_x = QDoubleSpinBox()
+        self.spin_sigma_x.setRange(0.0, 10.0)
+        self.spin_sigma_x.setDecimals(2)
+        self.spin_sigma_x.setSingleStep(0.25)
+        self.spin_sigma_x.setValue(2.0)
+        self.spin_sigma_x.valueChanged.connect(self._on_param_changed)
+        self.spin_sigma_r = QDoubleSpinBox()
+        self.spin_sigma_r.setRange(0.1, 2.0)
+        self.spin_sigma_r.setDecimals(4)
+        self.spin_sigma_r.setSingleStep(0.05)
+        self.spin_sigma_r.setValue(0.7071)
+        self.spin_sigma_r.valueChanged.connect(self._on_param_changed)
+        sig_box.addWidget(self.spin_sigma_x)
+        sig_box.addWidget(self.spin_sigma_r)
+        lay_chan.addLayout(sig_box, 3, 1)
 
         self.chk_rayleigh = QCheckBox("Habilitar Fast Fading (Rayleigh)")
         self.chk_rayleigh.setChecked(False)
         self.chk_rayleigh.toggled.connect(self._on_param_changed)
-        lay_chan.addWidget(self.chk_rayleigh)
-
-        lay_chan.addWidget(QLabel("Controle de Potência:"))
-        self.combo_power = QComboBox()
-        self.combo_power.addItem("Full Power (1W / 30 dBm)", "full_power")
-        self.combo_power.addItem("DPC Fixo (Meta 10 dB)", "dpc_fixed")
-        self.combo_power.addItem("Dual-Loop DPC (Mitigação Outage)", "dual_loop")
-        self.combo_power.currentIndexChanged.connect(self._on_param_changed)
-        lay_chan.addWidget(self.combo_power)
+        lay_chan.addWidget(self.chk_rayleigh, 4, 0, 1, 2)
 
         sidebar_layout.addWidget(grp_chan)
 
-        # 4. Configurações da Visão 3D e Mapa de Calor
+        # 4. Controle de Potência (DPC & Dual-Loop)
+        grp_pwr = QGroupBox("⚡ Controle de Potência")
+        lay_pwr = QGridLayout(grp_pwr)
+
+        lay_pwr.addWidget(QLabel("Algoritmo:"), 0, 0)
+        self.combo_power = QComboBox()
+        self.combo_power.addItem("Full Power (P_max)", "full_power")
+        self.combo_power.addItem("DPC Fixo", "dpc_fixed")
+        self.combo_power.addItem("Dual-Loop DPC (Desliga Outage)", "dual_loop")
+        self.combo_power.currentIndexChanged.connect(self._on_param_changed)
+        lay_pwr.addWidget(self.combo_power, 0, 1)
+
+        lay_pwr.addWidget(QLabel("P_max / P_min (dBm):"), 1, 0)
+        pmm_box = QHBoxLayout()
+        self.spin_p_max = QDoubleSpinBox()
+        self.spin_p_max.setRange(0.0, 50.0)
+        self.spin_p_max.setValue(30.0)
+        self.spin_p_max.valueChanged.connect(self._on_param_changed)
+        self.spin_p_min = QDoubleSpinBox()
+        self.spin_p_min.setRange(-40.0, 20.0)
+        self.spin_p_min.setValue(0.0)
+        self.spin_p_min.valueChanged.connect(self._on_param_changed)
+        pmm_box.addWidget(self.spin_p_max)
+        pmm_box.addWidget(self.spin_p_min)
+        lay_pwr.addLayout(pmm_box, 1, 1)
+
+        lay_pwr.addWidget(QLabel("Passo μ (dB) / Tol (dB):"), 2, 0)
+        mt_box = QHBoxLayout()
+        self.spin_mu = QDoubleSpinBox()
+        self.spin_mu.setRange(0.1, 5.0)
+        self.spin_mu.setSingleStep(0.5)
+        self.spin_mu.setValue(1.0)
+        self.spin_mu.valueChanged.connect(self._on_param_changed)
+        self.spin_tol = QDoubleSpinBox()
+        self.spin_tol.setRange(0.1, 3.0)
+        self.spin_tol.setSingleStep(0.1)
+        self.spin_tol.setValue(0.5)
+        self.spin_tol.valueChanged.connect(self._on_param_changed)
+        mt_box.addWidget(self.spin_mu)
+        mt_box.addWidget(self.spin_tol)
+        lay_pwr.addLayout(mt_box, 2, 1)
+
+        lay_pwr.addWidget(QLabel("γ_tar / γ_min / γ_max (dB):"), 3, 0)
+        gam_box = QHBoxLayout()
+        self.spin_g_tar = QDoubleSpinBox()
+        self.spin_g_tar.setRange(-5.0, 30.0)
+        self.spin_g_tar.setValue(10.0)
+        self.spin_g_tar.valueChanged.connect(self._on_param_changed)
+        self.spin_g_min = QDoubleSpinBox()
+        self.spin_g_min.setRange(-30.0, 5.0)
+        self.spin_g_min.setValue(-10.0)
+        self.spin_g_min.valueChanged.connect(self._on_param_changed)
+        self.spin_g_max = QDoubleSpinBox()
+        self.spin_g_max.setRange(5.0, 40.0)
+        self.spin_g_max.setValue(20.0)
+        self.spin_g_max.valueChanged.connect(self._on_param_changed)
+        gam_box.addWidget(self.spin_g_tar)
+        gam_box.addWidget(self.spin_g_min)
+        gam_box.addWidget(self.spin_g_max)
+        lay_pwr.addLayout(gam_box, 3, 1)
+
+        lay_pwr.addWidget(QLabel("Loop Ext / Int (iters):"), 4, 0)
+        lp_box = QHBoxLayout()
+        self.spin_t_outer = QSpinBox()
+        self.spin_t_outer.setRange(5, 200)
+        self.spin_t_outer.setValue(50)
+        self.spin_t_outer.valueChanged.connect(self._on_param_changed)
+        self.spin_t_inner = QSpinBox()
+        self.spin_t_inner.setRange(10, 1000)
+        self.spin_t_inner.setValue(150)
+        self.spin_t_inner.valueChanged.connect(self._on_param_changed)
+        lp_box.addWidget(self.spin_t_outer)
+        lp_box.addWidget(self.spin_t_inner)
+        lay_pwr.addLayout(lp_box, 4, 1)
+
+        sidebar_layout.addWidget(grp_pwr)
+
+        # 5. Camadas da Visão 3D e Mapa de Calor
         grp_view = QGroupBox("🗺️ Camadas da Visão 3D")
         lay_view = QVBoxLayout(grp_view)
 
@@ -163,9 +337,10 @@ class SimulatorMainWindow(QMainWindow):
 
         lay_view.addWidget(QLabel("Resolução da Malha:"))
         self.combo_heatmap_res = QComboBox()
-        self.combo_heatmap_res.addItem("Rápida (35×35)", 35)
-        self.combo_heatmap_res.addItem("Normal (50×50)", 50)
-        self.combo_heatmap_res.addItem("Alta (70×70)", 70)
+        self.combo_heatmap_res.addItem("Rápida (25×25)", 25)
+        self.combo_heatmap_res.addItem("Balanceada (45×45)", 45)
+        self.combo_heatmap_res.addItem("Normal (55×55)", 55)
+        self.combo_heatmap_res.addItem("Alta (75×75)", 75)
         self.combo_heatmap_res.setCurrentIndex(1)
         self.combo_heatmap_res.currentIndexChanged.connect(self._on_layer_toggled)
         lay_view.addWidget(self.combo_heatmap_res)
@@ -204,16 +379,23 @@ class SimulatorMainWindow(QMainWindow):
 
         sidebar_layout.addWidget(grp_view)
 
-        # 5. Experimento de Monte Carlo
+        # 6. Experimento de Monte Carlo
         grp_mc = QGroupBox("🎲 Experimento Monte Carlo")
-        lay_mc = QVBoxLayout(grp_mc)
+        lay_mc = QGridLayout(grp_mc)
 
-        lay_mc.addWidget(QLabel("Iterações de Simulação:"))
+        lay_mc.addWidget(QLabel("Escopo:"), 0, 0)
+        self.combo_mc_scope = QComboBox()
+        self.combo_mc_scope.addItem("Completo (Antenas + SciChal4A)", "both")
+        self.combo_mc_scope.addItem("Apenas Antenas", "antennas")
+        self.combo_mc_scope.addItem("Apenas Controle de Potência", "power")
+        lay_mc.addWidget(self.combo_mc_scope, 0, 1)
+
+        lay_mc.addWidget(QLabel("Iterações:"), 1, 0)
         self.spin_sim_iters = QSpinBox()
-        self.spin_sim_iters.setRange(10, 10000)
+        self.spin_sim_iters.setRange(10, 5000)
         self.spin_sim_iters.setValue(100)
         self.spin_sim_iters.setSingleStep(50)
-        lay_mc.addWidget(self.spin_sim_iters)
+        lay_mc.addWidget(self.spin_sim_iters, 1, 1)
 
         sidebar_layout.addWidget(grp_mc)
 
@@ -242,26 +424,23 @@ class SimulatorMainWindow(QMainWindow):
         # -------------------------------------------------------------------
         self.tabs = QTabWidget()
 
-        # Aba 1: Visão 3D do Mapa
         self.web_view_3d = QWebEngineView()
         self.tabs.addTab(self.web_view_3d, "🌐 Visão 3D Interativa do Mapa")
 
-        # Aba 2: KPIs & Gráficos
         self.web_view_kpi = QWebEngineView()
         self.tabs.addTab(self.web_view_kpi, "📊 KPIs & Gráficos Estatísticos")
 
-        # Aba 3: Mobilidade & Beam Tracking (Atividade 2)
         self.tab_mobility = MobilityView()
         self.tabs.addTab(self.tab_mobility, "🚗 Mobilidade & Beam Tracking")
 
-        # Aba 4: Tabela de Usuários
         self.tab_users = UsersTableView()
         self.tabs.addTab(self.tab_users, "📋 Tabela de Usuários & Links")
 
-        # Aba 5: Logs do Sistema
         self.log_console = QPlainTextEdit()
         self.log_console.setReadOnly(True)
-        self.log_console.setStyleSheet("background-color: #0d1117; color: #58a6ff; font-family: 'Consolas', monospace; font-size: 11px;")
+        self.log_console.setStyleSheet(
+            "background-color: #0d1117; color: #58a6ff; font-family: 'Consolas', monospace; font-size: 11px;"
+        )
         self.tabs.addTab(self.log_console, "📝 Console de Logs")
 
         splitter.addWidget(self.tabs)
@@ -291,42 +470,67 @@ class SimulatorMainWindow(QMainWindow):
         self.statusbar.addPermanentWidget(self.lbl_info)
 
     def log(self, message: str):
-        """Adiciona mensagem formatada com timestamp no console de logs."""
         timestamp = time.strftime("%H:%M:%S")
         self.log_console.appendPlainText(f"[{timestamp}] {message}")
+
+    def _parse_float(self, txt: str, fallback: float) -> float:
+        try:
+            return float(txt.strip())
+        except Exception:
+            return fallback
 
     def _get_current_params(self) -> dict:
         return {
             "M": int(self.combo_aps.currentData()),
             "K": int(self.spin_ues.value()),
             "N": int(self.spin_channels.value()),
+            "allocation": str(self.combo_alloc.currentData()),
+            "h_ap": float(self.spin_h_ap.value()),
+            "h_ue": float(self.spin_h_ue.value()),
+            "seed": int(self.spin_seed.value()),
             "model": str(self.combo_ant_model.currentData()),
             "L": int(self.combo_l.currentData()),
             "J": int(self.combo_j.currentData()),
+            "aoa_err_deg": float(self.spin_aoa_err.value()),
+            "beamwidth_deg": float(self.spin_beamwidth.value()),
+            "g_min": float(self.spin_g_min.value()),
+            "b_total_mhz": float(self.spin_bw.value()),
+            "pathloss_exp": float(self.spin_pathloss.value()),
+            "d_0": float(self.spin_d0.value()),
+            "k_const": self._parse_float(self.edit_k_const.text(), 1e-4),
+            "k_0": self._parse_float(self.edit_k_0.text(), 1e-20),
+            "sigma_x": float(self.spin_sigma_x.value()),
+            "sigma_r": float(self.spin_sigma_r.value()),
             "use_rayleigh": bool(self.chk_rayleigh.isChecked()),
             "power_mode": str(self.combo_power.currentData()),
+            "p_max_dbm": float(self.spin_p_max.value()),
+            "p_min_dbm": float(self.spin_p_min.value()),
+            "mu_step_db": float(self.spin_mu.value()),
+            "tol_db": float(self.spin_tol.value()),
+            "gamma_tar_db": float(self.spin_g_tar.value()),
+            "gamma_min_db": float(self.spin_g_min.value()),
+            "gamma_max_db": float(self.spin_g_max.value()),
+            "t_outer": int(self.spin_t_outer.value()),
+            "t_inner": int(self.spin_t_inner.value()),
             "heatmap_res": int(self.combo_heatmap_res.currentData()),
             "heatmap_metric": str(self.combo_heatmap_metric.currentData()),
-            "h_ap": 25.0,
-            "h_ue": 1.5,
+            "sim": int(self.spin_sim_iters.value()),
+            "mc_scope": str(self.combo_mc_scope.currentData()),
         }
 
     def _on_param_changed(self):
-        """Dispara atualização instantânea do cenário 3D quando parâmetros mudam."""
         self.update_3d_snapshot()
 
     def _on_layer_toggled(self):
-        """Re-renderiza o HTML 3D sem recalcular a geometria inteira caso apenas layers tenham mudado."""
         if self._current_snapshot is None:
             self.update_3d_snapshot()
             return
 
-        # Atualiza a métrica de heatmap se mudou
         metric = str(self.combo_heatmap_metric.currentData())
         res = int(self.combo_heatmap_res.currentData())
         if (
-            self._current_snapshot.get("heatmap", {}).get("metric") != metric or
-            len(self._current_snapshot.get("heatmap", {}).get("x", [])) != res
+            self._current_snapshot.get("heatmap", {}).get("metric") != metric
+            or len(self._current_snapshot.get("heatmap", {}).get("x", [])) != res
         ):
             self.update_3d_snapshot()
             return
@@ -334,10 +538,9 @@ class SimulatorMainWindow(QMainWindow):
         self._render_3d_view()
 
     def update_3d_snapshot(self):
-        """Calcula um novo snapshot representativo e atualiza a cena 3D e a tabela."""
         params = self._get_current_params()
         self.lbl_status.setText("Calculando novo cenário 3D e mapa de calor...")
-        self.log(f"Gerando cenário 3D com M={params['M']}, K={params['K']}, modelo={params['model']}...")
+        self.log(f"Gerando cenário 3D (M={params['M']}, K={params['K']}, modelo={params['model']}, pot={params['power_mode']})...")
 
         t0 = time.time()
         try:
@@ -345,9 +548,11 @@ class SimulatorMainWindow(QMainWindow):
             self._current_snapshot = snapshot
 
             self._render_3d_view()
-
-            # Atualiza tabela de usuários
             self.tab_users.update_data(snapshot["ues"], snapshot["aps"])
+
+            # Atualiza aba de KPIs instantâneos enquanto não houver Monte Carlo rodado
+            if self._latest_simulation is None:
+                self.web_view_kpi.setHtml(KPIViewGenerator.generate_snapshot_kpi_html(snapshot))
 
             dt = (time.time() - t0) * 1000
             self.lbl_status.setText(f"Cenário 3D atualizado em {dt:.0f} ms")
@@ -358,18 +563,17 @@ class SimulatorMainWindow(QMainWindow):
 
         except Exception as e:
             import traceback
+
             err = traceback.format_exc()
             self.lbl_status.setText("Erro ao gerar cenário")
             self.log(f"ERRO: {str(e)}\n{err}")
             QMessageBox.critical(self, "Erro", f"Falha ao gerar cenário 3D:\n{str(e)}")
 
     def _render_3d_view(self):
-        """Compila a cena 3D com Plotly e carrega no WebEngine."""
         if self._current_snapshot is None:
             return
 
         opacity = float(self.slider_opacity.value()) / 100.0
-
         html = View3DGenerator.generate_html(
             snapshot_data=self._current_snapshot,
             show_heatmap=self.chk_show_heatmap.isChecked(),
@@ -379,15 +583,12 @@ class SimulatorMainWindow(QMainWindow):
             show_ues=self.chk_show_ues.isChecked(),
             heatmap_opacity=opacity,
         )
-
         self.web_view_3d.setHtml(html)
 
     def run_monte_carlo(self):
-        """Executa a simulação Monte Carlo em uma thread separada."""
         params = self._get_current_params()
-        params["sim"] = int(self.spin_sim_iters.value())
-        params["power_control"] = str(self.combo_power.currentData())
-        params["models"] = ("omni", "sector", "smb", "adaptive")
+        params["power_control"] = params["power_mode"]
+        params["models"] = ("omni", "sector", "smb", "adaptive", "adaptive_1", "adaptive_5", "adaptive_10")
 
         self.btn_run_sim.setEnabled(False)
         self.btn_new_snapshot.setEnabled(False)
@@ -395,7 +596,7 @@ class SimulatorMainWindow(QMainWindow):
         self.progress_bar.setValue(0)
         self.lbl_status.setText("Executando Simulação Monte Carlo...")
 
-        self.log(f"Iniciando simulação Monte Carlo com {params['sim']} iterações...")
+        self.log(f"Iniciando Monte Carlo ({params['mc_scope']}, {params['sim']} iterações)...")
 
         self._worker = MonteCarloWorker(params)
         self._worker.progress_changed.connect(self._on_worker_progress)
@@ -416,12 +617,10 @@ class SimulatorMainWindow(QMainWindow):
         self.lbl_status.setText("Simulação Monte Carlo finalizada com sucesso!")
 
         self.log("Simulação Monte Carlo concluída. Atualizando painel de KPIs...")
-
-        # Atualiza o painel de KPIs e gráficos
         kpi_html = KPIViewGenerator.generate_kpi_html(results)
         self.web_view_kpi.setHtml(kpi_html)
-
-        # Muda automaticamente para a aba de KPIs para exibir os resultados ao usuário
+        if results.get("mc_rounds"):
+            self.tab_users.set_mc_rounds(results["mc_rounds"])
         self.tabs.setCurrentIndex(1)
 
     def _on_simulation_error(self, err_msg: str):
@@ -433,7 +632,6 @@ class SimulatorMainWindow(QMainWindow):
         QMessageBox.critical(self, "Erro na Simulação", err_msg)
 
     def export_snapshot_html(self):
-        """Exporta a cena 3D atual como arquivo HTML autocontido."""
         if self._current_snapshot is None:
             QMessageBox.warning(self, "Exportar", "Nenhum cenário 3D disponível para exportar.")
             return

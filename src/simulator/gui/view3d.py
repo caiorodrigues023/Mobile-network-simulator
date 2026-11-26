@@ -169,7 +169,11 @@ class View3DGenerator:
         if show_beams and aps:
             beam_x, beam_y, beam_z = [], [], []
             beam_colors = []
-            active_pairs = {(u["ap_id"], u["beam"]) for u in ues}
+            active_pairs = {
+                (u["ap_id"], u["beam"])
+                for u in ues
+                if u.get("active", True) and u.get("power_w", 1.0) > 0.0
+            }
 
             r_beam = 90.0  # Raio visual do feixe no mapa
 
@@ -265,8 +269,14 @@ class View3DGenerator:
                         )
 
                 elif model.startswith("adaptive"):
-                    # Feixes adaptativos MRC sintetizados diretamente na direção dos UEs conectados
-                    connected_ues = [u for u in ues if u["ap_id"] == ap["id"]]
+                    # Feixes adaptativos MRC sintetizados apenas para UEs ativos conectados
+                    connected_ues = [
+                        u
+                        for u in ues
+                        if u["ap_id"] == ap["id"]
+                        and u.get("active", True)
+                        and u.get("power_w", 1.0) > 0.0
+                    ]
                     for u in connected_ues:
                         dx = u["x"] - ap["x"]
                         dy = u["y"] - ap["y"]
@@ -300,26 +310,29 @@ class View3DGenerator:
                         )
 
         # -------------------------------------------------------------------
-        # 4. Linhas de Associação UE ↔ AP (Radio Links)
+        # 4. Linhas de Associação UE ↔ AP (Radio Links) — apenas UEs ativos
         # -------------------------------------------------------------------
         if show_links and ues:
             link_x, link_y, link_z = [], [], []
             for u in ues:
+                if not u.get("active", True) or u.get("power_w", 1.0) <= 0.0:
+                    continue
                 link_x.extend([u["x"], u["ap_x"], None])
                 link_y.extend([u["y"], u["ap_y"], None])
                 link_z.extend([u["z"], u["ap_z"], None])
 
-            fig.add_trace(
-                go.Scatter3d(
-                    x=link_x,
-                    y=link_y,
-                    z=link_z,
-                    mode="lines",
-                    line=dict(color="rgba(56, 189, 248, 0.65)", width=2, dash="dash"),
-                    name="Enlaces de Rádio (UE ↔ AP)",
-                    hoverinfo="skip",
+            if link_x:
+                fig.add_trace(
+                    go.Scatter3d(
+                        x=link_x,
+                        y=link_y,
+                        z=link_z,
+                        mode="lines",
+                        line=dict(color="rgba(56, 189, 248, 0.65)", width=2, dash="dash"),
+                        name="Enlaces de Rádio (UE ↔ AP)",
+                        hoverinfo="skip",
+                    )
                 )
-            )
 
         # -------------------------------------------------------------------
         # 5. Equipamentos de Usuário (UEs)
@@ -328,23 +341,38 @@ class View3DGenerator:
             ue_x = [u["x"] for u in ues]
             ue_y = [u["y"] for u in ues]
             ue_z = [u["z"] for u in ues]
-            ue_colors = [cls.AP_COLORS[u["ap_id"] % len(cls.AP_COLORS)] for u in ues]
-            ue_text = [f"UE {u['id']}" for u in ues]
-
+            ue_colors = []
+            ue_text = []
             ue_hover = []
             for u in ues:
-                ue_hover.append(
-                    f"<b>📱 Equipamento de Usuário UE {u['id']}</b><br>"
-                    f"Posição: ({u['x']:.1f}, {u['y']:.1f}, {u['z']:.1f}) m<br>"
-                    f"AP Servidor: 📡 AP {u['ap_id']}<br>"
-                    f"Feixe / Setor: {u['beam']}<br>"
-                    f"Canal Alocado: {u['channel']}<br>"
-                    f"Distância ao AP: {u['dist']:.1f} m (Azimute: {u['angle_deg']:.1f}°)<br>"
-                    f"Potência Tx: {u['power_w'] * 1000:.1f} mW ({u['power_dbm']:.1f} dBm)<br>"
-                    f"SINR: <b>{u['sinr_db']:+.1f} dB</b><br>"
-                    f"Capacidade de Shannon: <b>{u['cap_mbps']:.2f} Mbps</b><br>"
-                    f"Status: {u['status']}"
-                )
+                is_active = u.get("active", True) and u.get("power_w", 1.0) > 0.0
+                if is_active:
+                    ue_colors.append(cls.AP_COLORS[u["ap_id"] % len(cls.AP_COLORS)])
+                    ue_text.append(f"UE {u['id']}")
+                    ue_hover.append(
+                        f"<b>📱 Equipamento de Usuário UE {u['id']}</b><br>"
+                        f"Posição: ({u['x']:.1f}, {u['y']:.1f}, {u['z']:.1f}) m<br>"
+                        f"AP Servidor: 📡 AP {u['ap_id']}<br>"
+                        f"Feixe / Setor: {u['beam']}<br>"
+                        f"Canal Alocado: {u['channel']}<br>"
+                        f"Distância ao AP: {u['dist']:.1f} m (Azimute: {u['angle_deg']:.1f}°)<br>"
+                        f"Potência Tx: {u['power_w'] * 1000:.1f} mW ({u['power_dbm']:.1f} dBm)<br>"
+                        f"SINR: <b>{u['sinr_db']:+.1f} dB</b><br>"
+                        f"Capacidade de Shannon: <b>{u['cap_mbps']:.2f} Mbps</b><br>"
+                        f"Status: {u['status']}"
+                    )
+                else:
+                    ue_colors.append("#ef4444")
+                    ue_text.append(f"UE {u['id']} (OFF)")
+                    ue_hover.append(
+                        f"<b>📱 Equipamento de Usuário UE {u['id']} (OFF)</b><br>"
+                        f"Posição: ({u['x']:.1f}, {u['y']:.1f}, {u['z']:.1f}) m<br>"
+                        f"AP Associado: 📡 AP {u['ap_id']}<br>"
+                        f"Potência Tx: <b>0 mW (Desligado)</b><br>"
+                        f"SINR: <b>Desligado (&lt; -10 dB)</b><br>"
+                        f"Capacidade de Shannon: <b>0.00 Mbps</b><br>"
+                        f"Status: {u['status']}"
+                    )
 
             fig.add_trace(
                 go.Scatter3d(
@@ -428,22 +456,13 @@ class View3DGenerator:
                     up=dict(x=0, y=0, z=1),
                 ),
             ),
-            legend=dict(
-                bgcolor="rgba(17, 22, 34, 0.75)",
-                bordercolor="#232c3d",
-                borderwidth=1,
-                font=dict(color="#cbd5e1", size=11),
-                x=0.01,
-                y=0.99,
-                xanchor="left",
-                yanchor="top",
-            ),
+            showlegend=False,
         )
 
-        # Gera o HTML com plotly.js embutido offline
+        # Gera o HTML sem embutir o plotly.js novamente (carregado via <script src="{plotly_src}">)
         html = pyo.plot(
             fig,
-            include_plotlyjs="cdn",
+            include_plotlyjs=False,
             output_type="div",
             config={
                 "displayModeBar": True,
