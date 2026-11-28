@@ -107,7 +107,7 @@ def render_tab_convergence(
     m4.metric("Economia de Potência", f"{savings_pct:.1f}%")
 
     fig_p, fig_s, fig_t = build_convergence_figures(hist, power_unit=power_unit, ue_filter=ue_filter)
-    st.plotly_chart(fig_p, width="stretch")
-    st.plotly_chart(fig_s, width="stretch")
+    st.plotly_chart(fig_p, width="stretch", key="tab5_conv_p")
+    st.plotly_chart(fig_s, width="stretch", key="tab5_conv_s")
     if hist.get("algorithm") == "dual_loop":
-        st.plotly_chart(fig_t, width="stretch")
+        st.plotly_chart(fig_t, width="stretch", key="tab5_conv_t")

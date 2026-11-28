@@ -11,7 +11,13 @@ from typing import Callable, Optional
 import numpy as np
 
 from .config import B_TOTAL, D_0, K_0, K_CONST, PATHLOSS_EXP, SIGMA_X
-from .schemas import ChannelConfig, HandoverConfig, HandoverResult
+from .schemas import (
+    ChannelConfig,
+    HandoverConfig,
+    HandoverResult,
+    NetworkHandoverResult,
+    SimulationConfig,
+)
 
 
 def _eval_hard_handover_run(
@@ -19,6 +25,7 @@ def _eval_hard_handover_run(
     p_min_w: float,
     hysteresis_db: float,
     ttt_steps: int,
+    init_ap: int = 0,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, int]:
     """
     Executa Hard Handover para uma realização de potências recebidas `rx_power_w` (M, S).
@@ -41,7 +48,7 @@ def _eval_hard_handover_run(
     use_a3 = (hysteresis_db > 0.0) or (ttt_steps > 0)
     required_ttt = max(1, ttt_steps)
 
-    curr_ap = 0
+    curr_ap = int(init_ap)
     cand_ap = -1
     ttt_counter = 0
     ho_count = 0
@@ -237,4 +244,152 @@ def run_handover_simulation(
         hard_outage_rate_pct=float((hard_outages_total / total_samples) * 100.0),
         soft_outage_rate_pct=float((soft_outages_total / total_samples) * 100.0),
         mean_snr_gain_soft_vs_hard_db=float(snr_gain_acc / ho_cfg.mc_runs),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Motor de Handover (Hard vs. Soft) na REDE COMPLETA (M APs × K UEs)
+# ---------------------------------------------------------------------------
+
+
+def run_network_handover(
+    config: SimulationConfig,
+    seed: Optional[int] = None,
+    K_override: Optional[int] = None,
+) -> NetworkHandoverResult:
+    """
+    Simula Hard Handover vs. Soft Handover para TODOS os K UEs se movendo sobre
+    a grade completa de M APs (`area_m × area_m`), com shadowing espacialmente
+    correlacionado (modelo exponencial de Gudmundson).
+    """
+    from .mobility import generate_network_trajectories
+
+    ho_cfg = config.handover
+    snap_seed = config.seed if seed is None else int(seed)
+    K = config.K if K_override is None else int(K_override)
+
+    dt_ho = max(0.02, float(ho_cfg.ho_step_s))
+    t_ho = max(dt_ho * 5.0, float(ho_cfg.t_ho_s))
+    n_steps = max(5, int(round(t_ho / dt_ho)) + 1)
+    t_s = np.arange(n_steps, dtype=float) * dt_ho
+
+    ap_xy, ue_x, ue_y, ue_velocities_kmh, shad_init = generate_network_trajectories(
+        config, t_s, seed=snap_seed, K_override=K
+    )
+    M = ap_xy.shape[0]
+
+    d_0 = config.channel.d_0
+    k_const = config.channel.k_const
+    n_exp = config.channel.pathloss_exp
+    p_tx_w = config.power_control.p_max_w
+    p_noise = config.noise_power_w
+    p_min_dbm = float(ho_cfg.p_min_dbm_network)
+    p_min_w = 10.0 ** ((p_min_dbm - 30.0) / 10.0)
+
+    # Distâncias (T, K, M)
+    dx = ue_x[:, :, None] - ap_xy[None, None, :, 0]
+    dy = ue_y[:, :, None] - ap_xy[None, None, :, 1]
+    dists = np.maximum(np.hypot(dx, dy), d_0)
+    pl_base = p_tx_w * (k_const / (dists**n_exp))
+
+    # Shadowing espacialmente correlacionado (Gudmundson) por (UE, AP)
+    rng_ch = np.random.default_rng(snap_seed + 1313)
+    if config.channel.use_shadowing and config.channel.sigma_x > 0.0:
+        sigma_x = float(config.channel.sigma_x)
+        d_corr = max(1.0, float(ho_cfg.shadowing_corr_dist_m))
+        step_d = (ue_velocities_kmh / 3.6) * dt_ho  # (K,)
+        rho = np.exp(-step_d / d_corr)[:, None]  # (K, 1)
+        innov_std = np.sqrt(np.maximum(1.0 - rho**2, 0.0)) * sigma_x
+
+        z_log = np.empty((n_steps, K, M), dtype=float)
+        z_log[0] = np.log(np.maximum(shad_init, 1e-12))
+        for t_i in range(1, n_steps):
+            z_log[t_i] = rho * z_log[t_i - 1] + innov_std * rng_ch.normal(0.0, 1.0, size=(K, M))
+        shad_dyn = np.exp(z_log)
+    else:
+        shad_dyn = np.ones((n_steps, K, M), dtype=float)
+
+    if config.channel.use_rayleigh:
+        sr = config.channel.sigma_r
+        x1 = rng_ch.normal(0.0, sr, size=(n_steps, K, M))
+        x2 = rng_ch.normal(0.0, sr, size=(n_steps, K, M))
+        ray_sq = x1 * x1 + x2 * x2
+    else:
+        ray_sq = 1.0
+
+    rx_w = pl_base * shad_dyn * ray_sq  # (T, K, M)
+    rx_dbm = 10.0 * np.log10(np.maximum(rx_w, 1e-30) * 1000.0)
+
+    ttt_steps = int(round((ho_cfg.ttt_ms / 1000.0) / dt_ho)) if ho_cfg.ttt_ms > 0.0 else 0
+
+    hard_ap = np.zeros((n_steps, K), dtype=int)
+    soft_ap = np.zeros((n_steps, K), dtype=int)
+    hard_out = np.zeros((n_steps, K), dtype=bool)
+    soft_out = np.zeros((n_steps, K), dtype=bool)
+    hard_p = np.zeros((n_steps, K), dtype=float)
+    soft_p = np.zeros((n_steps, K), dtype=float)
+    hard_ho_ue = np.zeros(K, dtype=int)
+    soft_ho_ue = np.zeros(K, dtype=int)
+
+    for k in range(K):
+        rx_k = rx_w[:, k, :].T  # (M, T)
+        init_ap = int(np.argmax(rx_k[:, 0]))
+        if M == 1:
+            hard_ap[:, k] = 0
+            soft_ap[:, k] = 0
+            hard_p[:, k] = rx_k[0]
+            soft_p[:, k] = rx_k[0]
+            hard_out[:, k] = rx_k[0] < p_min_w
+            soft_out[:, k] = rx_k[0] < p_min_w
+            hard_ho_ue[k] = 0
+            soft_ho_ue[k] = 0
+        else:
+            h_ap, h_o, h_pw, h_cnt = _eval_hard_handover_run(
+                rx_k, p_min_w, ho_cfg.hysteresis_db, ttt_steps, init_ap=init_ap
+            )
+            s_ap, s_o, s_pw, s_cnt = _eval_soft_handover_run(
+                rx_k, p_min_w, ho_cfg.active_set_margin_db, ho_cfg.soft_combining
+            )
+            hard_ap[:, k] = h_ap
+            soft_ap[:, k] = s_ap
+            hard_out[:, k] = h_o
+            soft_out[:, k] = s_o
+            hard_p[:, k] = h_pw
+            soft_p[:, k] = s_pw
+            hard_ho_ue[k] = h_cnt
+            soft_ho_ue[k] = s_cnt
+
+    hard_snr_db = 10.0 * np.log10(np.maximum(hard_p / p_noise, 1e-30))
+    soft_snr_db = 10.0 * np.log10(np.maximum(soft_p / p_noise, 1e-30))
+
+    return NetworkHandoverResult(
+        config=ho_cfg,
+        M=M,
+        K=K,
+        area_m=config.area_m,
+        seed=snap_seed,
+        p_min_dbm=p_min_dbm,
+        ap_xy=ap_xy,
+        t_s=t_s,
+        ue_x_m=ue_x,
+        ue_y_m=ue_y,
+        ue_velocities_kmh=ue_velocities_kmh,
+        rx_power_dbm=rx_dbm,
+        hard_serving_ap=hard_ap,
+        soft_serving_ap=soft_ap,
+        hard_outage_mask=hard_out,
+        soft_outage_mask=soft_out,
+        hard_snr_db=hard_snr_db,
+        soft_snr_db=soft_snr_db,
+        hard_handovers_per_ue=hard_ho_ue,
+        soft_handovers_per_ue=soft_ho_ue,
+        hard_outage_pct_per_ue=np.mean(hard_out, axis=0) * 100.0,
+        soft_outage_pct_per_ue=np.mean(soft_out, axis=0) * 100.0,
+        hard_outage_rate_pct=float(np.mean(hard_out) * 100.0),
+        soft_outage_rate_pct=float(np.mean(soft_out) * 100.0),
+        hard_handovers_total=int(np.sum(hard_ho_ue)),
+        soft_handovers_total=int(np.sum(soft_ho_ue)),
+        hard_handovers_mean=float(np.mean(hard_ho_ue)),
+        soft_handovers_mean=float(np.mean(soft_ho_ue)),
+        mean_snr_gain_soft_vs_hard_db=float(np.mean(soft_snr_db - hard_snr_db)),
     )

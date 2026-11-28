@@ -23,6 +23,7 @@ from app.tabs.tab_handover import render_tab_handover  # noqa: E402
 from app.tabs.tab_kpis import render_tab_kpis  # noqa: E402
 from app.tabs.tab_mobility import render_tab_mobility  # noqa: E402
 from app.tabs.tab_snapshot import render_tab_snapshot  # noqa: E402
+from app.tabs.tab_users import render_tab_users  # noqa: E402
 from simulator.runner import run_monte_carlo  # noqa: E402
 
 
@@ -58,29 +59,41 @@ def main() -> None:
 
     mc_result = st.session_state.get("mc_result")
 
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(
-        [
-            "🗺️ Snapshot & Monte Carlo",
-            "📈 CDFs Comparativas",
-            "🏆 KPIs & Tabela",
-            "🚗 Mobilidade, Tracking & SDMA",
-            "🔄 Handover (Hard vs. Soft)",
-            "🔬 Convergência do Snapshot",
-        ]
-    )
+    # Abas dinâmicas: 5 abas no Modo Estático; 7 abas quando "Em Movimento" está ativo
+    tab_labels = [
+        "🗺️ Snapshot & Visão Geral",
+        "📊 KPIs & Gráficos",
+        "📈 CDFs Comparativas",
+        "📋 Tabela de UEs & Rodadas",
+        "🔬 Convergência",
+    ]
+    is_mobile = config.ue_mode == "mobile"
+    if is_mobile:
+        tab_labels.extend(
+            [
+                "🚗 Mobilidade & Beam Tracking",
+                "🔄 Handover (Hard vs. Soft)",
+            ]
+        )
 
-    with tab1:
+    tabs = st.tabs(tab_labels)
+
+    with tabs[0]:
         snapshot = render_tab_snapshot(config, mc_result)
-    with tab2:
+    with tabs[1]:
+        render_tab_kpis(config, snapshot, mc_result)
+    with tabs[2]:
         render_tab_cdfs(mc_result)
-    with tab3:
-        render_tab_kpis(mc_result)
-    with tab4:
-        render_tab_mobility(config)
-    with tab5:
-        render_tab_handover(config)
-    with tab6:
+    with tabs[3]:
+        render_tab_users(config, snapshot, mc_result)
+    with tabs[4]:
         render_tab_convergence(config, snapshot, mc_result)
+
+    if is_mobile:
+        with tabs[5]:
+            render_tab_mobility(config, snapshot)
+        with tabs[6]:
+            render_tab_handover(config, snapshot)
 
 
 if __name__ == "__main__":

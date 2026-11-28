@@ -50,7 +50,7 @@ EXERCISE_PRESETS: dict[str, dict[str, Any]] = {
         "k_scenarios": [1, 4, 8],
         "N": 1,
         "allocation_policy": "full_reuse",
-        "comparison_mode": "power",
+        "comparison_mode": "auto",
         "snapshot_antenna_model": "mrc",
         "snapshot_power_mode": "dual_loop",
         "channel": {"use_shadowing": True, "sigma_x": 2.0, "use_rayleigh": True},
@@ -66,7 +66,7 @@ EXERCISE_PRESETS: dict[str, dict[str, Any]] = {
         "k_scenarios": [1, 4, 8],
         "N": 1,
         "allocation_policy": "full_reuse",
-        "comparison_mode": "antennas",
+        "comparison_mode": "auto",
         "snapshot_antenna_model": "smb",
         "snapshot_power_mode": "full_power",
         "channel": {"use_shadowing": True, "sigma_x": 2.0, "use_rayleigh": False},
@@ -82,7 +82,7 @@ EXERCISE_PRESETS: dict[str, dict[str, Any]] = {
         "k_scenarios": [1, 4, 8],
         "N": 1,
         "allocation_policy": "full_reuse",
-        "comparison_mode": "antennas",
+        "comparison_mode": "auto",
         "snapshot_antenna_model": "adaptive_5",
         "snapshot_power_mode": "full_power",
         "channel": {"use_shadowing": True, "sigma_x": 2.0, "use_rayleigh": False},
@@ -100,7 +100,7 @@ EXERCISE_PRESETS: dict[str, dict[str, Any]] = {
         "k_scenarios": [8, 16, 32],
         "N": 2,
         "allocation_policy": "papoa_ca",
-        "comparison_mode": "antennas",
+        "comparison_mode": "auto",
         "snapshot_antenna_model": "omni",
         "snapshot_power_mode": "full_power",
         "channel": {"use_shadowing": True, "sigma_x": 2.0, "use_rayleigh": False},
@@ -114,7 +114,7 @@ EXERCISE_PRESETS: dict[str, dict[str, Any]] = {
         "N": 1,
         "area_m": 100.0,
         "allocation_policy": "full_reuse",
-        "comparison_mode": "power",
+        "comparison_mode": "auto",
         "snapshot_antenna_model": "omni",
         "snapshot_power_mode": "optimal",
         "channel": {"use_shadowing": True, "sigma_x": 2.0, "use_rayleigh": False},
@@ -131,7 +131,7 @@ EXERCISE_PRESETS: dict[str, dict[str, Any]] = {
         "k_scenarios": [4, 8],
         "N": 1,
         "allocation_policy": "full_reuse",
-        "comparison_mode": "power",
+        "comparison_mode": "auto",
         "snapshot_antenna_model": "omni",
         "snapshot_power_mode": "max_sum",
         "channel": {"use_shadowing": True, "sigma_x": 2.0, "use_rayleigh": True},
@@ -166,7 +166,7 @@ def _apply_config_to_widget_state(cfg: SimulationConfig) -> None:
     st.session_state["sb_mc_runs"] = int(cfg.monte_carlo_runs)
     st.session_state["sb_seed"] = int(cfg.seed)
     st.session_state["sb_ue_mode"] = (
-        "Em Movimento (Mobilidade / Handover / SDMA)" if cfg.ue_mode == "mobile" else "Estático"
+        "Em Movimento (Mobilidade / Handover)" if cfg.ue_mode == "mobile" else "Estático"
     )
     st.session_state["sb_comp_mode"] = cfg.comparison_mode
     st.session_state["sb_M"] = int(cfg.M)
@@ -247,22 +247,24 @@ def render_sidebar() -> tuple[SimulationConfig, bool, bool]:
 
             ue_mode_label = st.radio(
                 "Modo do UE",
-                options=["Estático", "Em Movimento (Mobilidade / Handover / SDMA)"],
+                options=["Estático", "Em Movimento (Mobilidade / Handover)"],
                 key="sb_ue_mode",
+                help="No modo Estático as abas de Mobilidade e Handover ficam ocultas. Ative 'Em Movimento' para simular todos os K UEs se movendo na rede completa.",
             )
             ue_mode = "mobile" if "Movimento" in ue_mode_label else "static"
 
             comp_labels = {
-                "power": "Algoritmos de Potência",
-                "antennas": "Modelos de Antena",
+                "auto": "Automático (Antenas e/ou Potência selecionadas)",
                 "both": "Ambos (Antenas + Potência)",
+                "antennas": "Somente Modelos de Antena",
+                "power": "Somente Algoritmos de Potência",
             }
             comparison_mode = st.selectbox(
-                "Comparativo no Monte Carlo",
-                options=["power", "antennas", "both"],
+                "Escopo Comparativo (Monte Carlo)",
+                options=["auto", "both", "antennas", "power"],
                 format_func=lambda k: comp_labels[k],
                 key="sb_comp_mode",
-                help="Evita explosão combinatória: compara Antenas com a potência do snapshot e/ou Potência com a antena do snapshot.",
+                help="No modo Automático, gera gráficos comparativos de Antenas sempre que >1 antena for selecionada e de Potência sempre que >1 algoritmo for selecionado.",
             )
 
             col_b1, col_b2 = st.columns(2)
@@ -276,7 +278,6 @@ def render_sidebar() -> tuple[SimulationConfig, bool, bool]:
                 width="stretch",
             )
 
-            # Presets rápidos dos roteiros
             preset_name = st.selectbox(
                 "Presets dos Roteiros",
                 options=["— Selecionar preset —", *EXERCISE_PRESETS.keys()],
@@ -370,7 +371,7 @@ def render_sidebar() -> tuple[SimulationConfig, bool, bool]:
         # ------------------------------------------------------------------
         with st.expander("📡 Antenas & MIMO", expanded=False):
             ant_models = st.multiselect(
-                "Modelos de Antena",
+                "Modelos de Antena (selecione >1 para comparar)",
                 options=ANTENNA_OPTIONS,
                 format_func=lambda k: MODEL_LABELS.get(k, k),
                 key="sb_ant_models",
@@ -404,7 +405,7 @@ def render_sidebar() -> tuple[SimulationConfig, bool, bool]:
         # ------------------------------------------------------------------
         with st.expander("⚡ Controle de Potência & Limites Físicos", expanded=False):
             pwr_algos = st.multiselect(
-                "Algoritmos de Controle de Potência",
+                "Algoritmos de Controle de Potência (selecione >1 para comparar)",
                 options=POWER_OPTIONS,
                 format_func=lambda k: MODEL_LABELS.get(k, k),
                 key="sb_pwr_algos",
@@ -444,86 +445,105 @@ def render_sidebar() -> tuple[SimulationConfig, bool, bool]:
             tol_db = l3.number_input("tol (dB)", min_value=0.0, max_value=3.0, step=0.1, key="sb_tol_db")
 
         # ------------------------------------------------------------------
-        # 6. Mobilidade, Tracking Preditivo, SDMA & Handover
+        # 6. Mobilidade, Tracking & Handover (somente quando "Em Movimento")
         # ------------------------------------------------------------------
-        with st.expander(
-            "🚗 Mobilidade, Tracking Preditivo, SDMA & Handover",
-            expanded=(ue_mode == "mobile"),
-        ):
-            vel_preset = st.selectbox(
-                "Perfil de Velocidade",
-                options=["Highway (120 km/h)", "Urban (50 km/h)", "Pedestrian (3 km/h)", "Customizado"],
-                index=0,
-                key="sb_mob_vel_preset",
-            )
-            if vel_preset == "Customizado":
-                sel_v = st.number_input(
-                    "Velocidade (km/h)", min_value=1.0, max_value=400.0, value=90.0, step=5.0
+        sel_v = 120.0
+        mixed_speeds = False
+        sel_dt_ms = 100
+        sel_mob_L = int(L_ant)
+        mob_array_type = "ula"
+        mob_sigma = 1.0
+        mob_dt_ms = 5.0
+        mob_t_sim = 4.0
+        mob_t_ovh_ms = 1.5
+        compare_pred = True
+        enable_sdma = True
+        sdma_comb = "both"
+
+        ho_t_s = 20.0
+        ho_step_s = 0.2
+        ho_pmin_dbm = -102.0
+        ho_hyst = 0.0
+        ho_ttt = 0.0
+        ho_as_margin = 0.0
+        ho_soft_mode = "selection"
+
+        if ue_mode == "mobile":
+            with st.expander("🚗 Mobilidade, Tracking & Handover (Rede Completa)", expanded=True):
+                vel_preset = st.selectbox(
+                    "Perfil de Velocidade dos K UEs",
+                    options=["Highway (120 km/h)", "Urban (50 km/h)", "Pedestrian (3 km/h)", "Customizado"],
+                    index=0,
+                    key="sb_mob_vel_preset",
                 )
-            else:
-                sel_v = MOBILITY_PROFILES_KMH[vel_preset.split(" ")[0]]
+                if vel_preset == "Customizado":
+                    sel_v = st.number_input(
+                        "Velocidade (km/h)", min_value=1.0, max_value=400.0, value=90.0, step=5.0
+                    )
+                else:
+                    sel_v = MOBILITY_PROFILES_KMH[vel_preset.split(" ")[0]]
 
-            m1, m2 = st.columns(2)
-            sel_dt_ms = m1.selectbox("ΔT Principal (ms)", options=[100, 50, 10], index=0)
-            sel_D = m2.selectbox("Distância D (m)", options=[25.0, 50.0, 75.0, 150.0], index=1)
+                mixed_speeds = st.checkbox(
+                    "Velocidades mistas entre UEs (3 / 50 / 120 km/h)", value=False
+                )
 
-            m3, m4 = st.columns(2)
-            sel_mob_L = m3.selectbox("ULA Antenas (L)", options=[8, 16, 32], index=2)
-            mob_sigma = m4.number_input(
-                "Erro AoA σ_θ (°)", min_value=0.0, max_value=10.0, value=1.0, step=0.5
-            )
+                m1, m2 = st.columns(2)
+                sel_dt_ms = m1.selectbox("ΔT Beam Tracking (ms)", options=[100, 50, 10], index=0)
+                sel_mob_L = m2.selectbox("Antenas no Arranjo (L)", options=[8, 16, 32], index=2)
 
-            m5, m6, m7 = st.columns(3)
-            mob_dt_ms = m5.number_input("dt (ms)", min_value=0.5, max_value=10.0, value=1.0, step=0.5)
-            mob_t_sim = m6.number_input("T_sim (s)", min_value=0.5, max_value=10.0, value=4.0, step=0.5)
-            mob_t_ovh_ms = m7.number_input(
-                "T_ovh (ms)", min_value=0.0, max_value=10.0, value=1.5, step=0.5
-            )
+                m3, m4 = st.columns(2)
+                mob_array_type = m3.selectbox(
+                    "Arranjo (Tracking)",
+                    options=["ula", "uca"],
+                    format_func=lambda k: "ULA (Linear)" if k == "ula" else "UCA (Circular)",
+                )
+                mob_sigma = m4.number_input(
+                    "Erro AoA σ_θ (°)", min_value=0.0, max_value=10.0, value=1.0, step=0.5
+                )
 
-            compare_pred = st.checkbox(
-                "Comparar Rastreamento Preditivo vs. Padrão (Hold)", value=True
-            )
-            enable_sdma = st.checkbox("Habilitar SDMA Multi-usuário Móvel", value=True)
-            s1, s2 = st.columns(2)
-            sdma_k = s1.number_input(
-                "K_móvel (SDMA)", min_value=1, max_value=8, value=4, disabled=not enable_sdma
-            )
-            sdma_comb = s2.selectbox(
-                "Combinador SDMA",
-                options=["both", "mrc", "zf"],
-                format_func=lambda k: {"both": "MRC vs. ZF", "mrc": "MRC", "zf": "Zero-Forcing"}[k],
-                disabled=not enable_sdma,
-            )
+                m5, m6, m7 = st.columns(3)
+                mob_dt_ms = m5.number_input("dt (ms)", min_value=1.0, max_value=20.0, value=5.0, step=1.0)
+                mob_t_sim = m6.number_input("T_sim (s)", min_value=1.0, max_value=15.0, value=4.0, step=1.0)
+                mob_t_ovh_ms = m7.number_input(
+                    "T_ovh (ms)", min_value=0.0, max_value=10.0, value=1.5, step=0.5
+                )
 
-            st.markdown("---")
-            st.caption("**Parâmetros de Handover (Hard vs. Soft)**")
-            compare_ho = st.checkbox("Comparar Hard vs. Soft Handover", value=True)
-            h1, h2 = st.columns(2)
-            ho_aps = h1.number_input("APs na Rodovia", min_value=2, max_value=6, value=2, step=1)
-            ho_dist = h2.number_input(
-                "Distância Total (m)", min_value=500.0, max_value=10000.0, value=3100.0, step=100.0
-            )
-            h3, h4 = st.columns(2)
-            ho_hyst = h3.number_input(
-                "Histerese (dB)",
-                min_value=0.0,
-                max_value=15.0,
-                value=0.0,
-                step=1.0,
-                help="0 dB = modo reativo fiel ao Exercício 13.",
-            )
-            ho_ttt = h4.number_input("TTT (ms)", min_value=0.0, max_value=5000.0, value=0.0, step=500.0)
-            h5, h6 = st.columns(2)
-            ho_as_margin = h5.number_input(
-                "Margem Conj. Ativo (dB)",
-                min_value=0.0,
-                max_value=15.0,
-                value=0.0,
-                step=1.0,
-                help="0 dB = seleção pura (Ex. 13); >0 dB habilita macro-diversidade.",
-            )
-            ho_runs = h6.number_input("Rodadas MC (HO)", min_value=50, max_value=5000, value=500, step=100)
-            ho_soft_mode = "macro_diversity" if ho_as_margin > 0.0 else "selection"
+                compare_pred = st.checkbox(
+                    "Comparar Rastreamento Preditivo vs. Hold", value=True
+                )
+                enable_sdma = st.checkbox("Habilitar SDMA na Rede (MRC vs. ZF)", value=True)
+                sdma_comb = st.selectbox(
+                    "Combinador SDMA",
+                    options=["both", "mrc", "zf"],
+                    format_func=lambda k: {"both": "MRC vs. ZF", "mrc": "MRC", "zf": "Zero-Forcing"}[k],
+                    disabled=not enable_sdma,
+                )
+
+                st.markdown("---")
+                st.caption("**Handover na Rede Completa (Hard vs. Soft)**")
+                h1, h2 = st.columns(2)
+                ho_t_s = h1.number_input("Duração T_ho (s)", min_value=4.0, max_value=120.0, value=20.0, step=5.0)
+                ho_step_s = h2.number_input("Passo T_s (s)", min_value=0.05, max_value=2.0, value=0.2, step=0.05)
+
+                h3, h4 = st.columns(2)
+                ho_pmin_dbm = h3.number_input(
+                    "Limiar Outage P_min (dBm)", min_value=-130.0, max_value=-60.0, value=-102.0, step=2.0
+                )
+                ho_hyst = h4.number_input(
+                    "Histerese (dB)", min_value=0.0, max_value=15.0, value=0.0, step=1.0
+                )
+
+                h5, h6 = st.columns(2)
+                ho_ttt = h5.number_input("TTT (ms)", min_value=0.0, max_value=5000.0, value=0.0, step=200.0)
+                ho_as_margin = h6.number_input(
+                    "Margem Conj. Ativo (dB)",
+                    min_value=0.0,
+                    max_value=15.0,
+                    value=0.0,
+                    step=1.0,
+                    help="0 dB = seleção do melhor AP; >0 dB habilita macro-diversidade.",
+                )
+                ho_soft_mode = "macro_diversity" if ho_as_margin > 0.0 else "selection"
 
         # ------------------------------------------------------------------
         # Montagem e validação do contrato `SimulationConfig`
@@ -585,30 +605,42 @@ def render_sidebar() -> tuple[SimulationConfig, bool, bool]:
             mobility=MobilityConfig(
                 selected_velocity_kmh=float(sel_v),
                 selected_delta_t_s=float(sel_dt_ms) / 1000.0,
-                selected_distance_m=float(sel_D),
                 selected_L=int(sel_mob_L),
                 dt_s=float(mob_dt_ms) / 1000.0,
                 t_sim_s=float(mob_t_sim),
                 t_overhead_s=float(mob_t_ovh_ms) / 1000.0,
                 sigma_theta_deg=float(mob_sigma),
+                array_type=str(mob_array_type),
                 compare_predictive=bool(compare_pred),
                 enable_sdma=bool(enable_sdma),
-                sdma_k_ues=int(sdma_k),
+                sdma_k_ues=int(K_snap),
                 sdma_combiner=str(sdma_comb),
+                mixed_speeds=bool(mixed_speeds),
                 seed=int(seed),
             ),
             handover=HandoverConfig(
-                num_aps=int(ho_aps),
-                dist_total_m=float(ho_dist),
                 hysteresis_db=float(ho_hyst),
                 active_set_margin_db=float(ho_as_margin),
                 ttt_ms=float(ho_ttt),
                 soft_combining=ho_soft_mode,
-                compare_hard_soft=bool(compare_ho),
-                mc_runs=int(ho_runs),
+                compare_hard_soft=True,
+                t_ho_s=float(ho_t_s),
+                ho_step_s=float(ho_step_s),
+                p_min_dbm_network=float(ho_pmin_dbm),
                 seed=int(seed),
             ),
         )
+
+        # Resumo dinâmico do que será comparado no Monte Carlo
+        from simulator.runner import resolve_comparison_flags
+
+        will_ant, will_pwr, _ = resolve_comparison_flags(config)
+        parts: list[str] = []
+        if will_ant:
+            parts.append(f"{len(ant_models)} antena(s)")
+        if will_pwr:
+            parts.append(f"{len(pwr_algos)} algoritmo(s) de potência")
+        st.caption("📊 **Monte Carlo comparará:** " + " + ".join(parts))
 
         # ------------------------------------------------------------------
         # 7. Exportar / Importar Configuração JSON

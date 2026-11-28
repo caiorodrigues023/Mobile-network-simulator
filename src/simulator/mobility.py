@@ -9,9 +9,18 @@ from typing import Any, Callable, Optional
 
 import numpy as np
 
+from .allocation import allocate_channels_vec
 from .antennas import calc_ula_gain, mrc_gain, uca_steering, ula_steering
+from .channel import gerar_shadowing
 from .config import B_TOTAL, D_0, K_0, K_CONST, PATHLOSS_EXP
-from .schemas import ChannelConfig, MobilityConfig, MobilityResult, SDMAResult
+from .schemas import (
+    ChannelConfig,
+    MobilityConfig,
+    MobilityResult,
+    NetworkMobilityResult,
+    SDMAResult,
+    SimulationConfig,
+)
 
 # ---------------------------------------------------------------------------
 # Estratégias de Rastreamento de Feixe (Strategy Registry)
@@ -512,3 +521,482 @@ def run_mobile_sdma(
         mean_sum_se_mrc=float(np.mean(sum_se_mrc)),
         mean_sum_se_zf=float(np.mean(sum_se_zf)),
     )
+
+
+# ---------------------------------------------------------------------------
+# Simulação de Mobilidade & Beam Tracking na REDE COMPLETA (M APs × K UEs)
+# ---------------------------------------------------------------------------
+
+
+def _fold_positions_1d(pos: np.ndarray, lo: float, hi: float) -> np.ndarray:
+    """Reflexão elástica vetorizada em [lo, hi] (onda triangular contínua)."""
+    width = hi - lo
+    if width <= 0.0:
+        return np.full_like(pos, lo)
+    u = np.mod(pos - lo, 2.0 * width)
+    return lo + np.where(u <= width, u, 2.0 * width - u)
+
+
+def _wrap_angle_diff(diff_rad: np.ndarray) -> np.ndarray:
+    """Normaliza diferença angular para o intervalo [-π, π]."""
+    return (diff_rad + np.pi) % (2.0 * np.pi) - np.pi
+
+
+def _track_azimuth_segmented(
+    theta_real: np.ndarray,
+    serving_ap: np.ndarray,
+    step_samples: int,
+    dt_s: float,
+    delta_t_s: float,
+    sigma_theta_deg: float,
+    err_rad: np.ndarray,
+    predictive: bool,
+) -> np.ndarray:
+    """
+    Rastreia azimute 2D em [-π, π] de um UE ao longo de `n_steps`, reiniciando
+    suavemente quando o UE troca de AP servidor (evita salto artificial de 180°).
+    """
+    n_steps = len(theta_real)
+    theta_tgt = np.empty(n_steps, dtype=float)
+    dt_eff = step_samples * dt_s
+
+    if sigma_theta_deg <= 1e-6:
+        alpha, beta = 1.0, 1.0
+    elif delta_t_s <= 0.020:
+        alpha, beta = 0.45, 0.10
+    elif delta_t_s <= 0.060:
+        alpha, beta = 0.60, 0.22
+    else:
+        alpha, beta = 0.72, 0.35
+
+    theta_hat = float(theta_real[0] + err_rad[0])
+    theta_dot = 0.0
+    seg_upd_cnt = 0
+    last_upd_step = 0
+    upd_idx = 0
+
+    for t in range(n_steps):
+        ap_changed = t > 0 and serving_ap[t] != serving_ap[t - 1]
+        is_periodic_upd = (t % step_samples) == 0
+
+        if t == 0 or ap_changed:
+            err = float(err_rad[min(upd_idx, len(err_rad) - 1)])
+            theta_hat = float(theta_real[t]) + err
+            theta_dot = 0.0
+            seg_upd_cnt = 1
+            last_upd_step = t
+            if is_periodic_upd:
+                upd_idx += 1
+        elif is_periodic_upd:
+            err = float(err_rad[min(upd_idx, len(err_rad) - 1)])
+            upd_idx += 1
+            meas = float(theta_real[t]) + err
+            if not predictive:
+                theta_hat = meas
+                theta_dot = 0.0
+            else:
+                dt_local = max((t - last_upd_step) * dt_s, dt_s)
+                if seg_upd_cnt == 1:
+                    raw_diff = float(_wrap_angle_diff(np.array(meas - theta_hat)))
+                    if sigma_theta_deg <= 1e-6:
+                        theta_hat = theta_hat + raw_diff
+                        theta_dot = raw_diff / dt_local
+                    else:
+                        theta_hat = theta_hat + alpha * raw_diff
+                        theta_dot = (beta / dt_local) * raw_diff
+                else:
+                    theta_pred = theta_hat + theta_dot * dt_local
+                    residual = float(_wrap_angle_diff(np.array(meas - theta_pred)))
+                    theta_hat = theta_pred + alpha * residual
+                    theta_dot = theta_dot + (beta / max(dt_eff, dt_local)) * residual
+                seg_upd_cnt += 1
+            last_upd_step = t
+
+        if predictive:
+            theta_tgt[t] = theta_hat + theta_dot * ((t - last_upd_step) * dt_s)
+        else:
+            theta_tgt[t] = theta_hat
+
+    return theta_tgt
+
+
+def generate_network_trajectories(
+    config: SimulationConfig,
+    t_s: np.ndarray,
+    seed: Optional[int] = None,
+    K_override: Optional[int] = None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Gera posições iniciais dos M APs e K UEs idênticas ao Snapshot (`seed`)
+    e propaga todos os K UEs em 2D dentro de `[margin, area_m - margin]²`
+    com reflexão elástica nas bordas.
+
+    Retorna: (ap_xy (M,2), ue_x (T,K), ue_y (T,K), ue_velocities_kmh (K,), shadowing (K,M)).
+    """
+    from .runner import distribute_aps_xy, sample_ue_xy
+
+    snap_seed = config.seed if seed is None else int(seed)
+    K = config.K if K_override is None else int(K_override)
+    rng_topo = np.random.default_rng(snap_seed)
+
+    ap_xy = distribute_aps_xy(config.M, config.area_m)
+    ue_xy_0 = sample_ue_xy(K, ap_xy, config.area_m, config.channel.d_0, rng=rng_topo)
+    shadowing = gerar_shadowing(
+        K,
+        config.M,
+        sigma_x=config.channel.sigma_x,
+        use_shadowing=config.channel.use_shadowing,
+        rng=rng_topo,
+    )
+
+    rng_kin = np.random.default_rng(snap_seed + 404)
+    base_v = float(config.mobility.selected_velocity_kmh)
+    if config.mobility.mixed_speeds and K > 1:
+        profiles = np.asarray(config.mobility.velocities_kmh, dtype=float)
+        if profiles.size >= 2:
+            ue_velocities_kmh = np.array([profiles[k % profiles.size] for k in range(K)], dtype=float)
+        else:
+            ue_velocities_kmh = base_v * np.linspace(0.55, 1.25, K)
+    else:
+        ue_velocities_kmh = np.full(K, base_v, dtype=float)
+
+    headings = rng_kin.uniform(0.0, 2.0 * np.pi, size=K)
+    v_ms = ue_velocities_kmh / 3.6
+    vx = v_ms * np.cos(headings)  # (K,)
+    vy = v_ms * np.sin(headings)  # (K,)
+
+    margin = max(config.channel.d_0 * 2.0, min(15.0, config.area_m * 0.02))
+    lo, hi = margin, config.area_m - margin
+
+    raw_x = ue_xy_0[None, :, 0] + t_s[:, None] * vx[None, :]  # (T, K)
+    raw_y = ue_xy_0[None, :, 1] + t_s[:, None] * vy[None, :]  # (T, K)
+
+    ue_x = _fold_positions_1d(raw_x, lo, hi)
+    ue_y = _fold_positions_1d(raw_y, lo, hi)
+    return ap_xy, ue_x, ue_y, ue_velocities_kmh, shadowing
+
+
+def run_network_mobility(
+    config: SimulationConfig,
+    seed: Optional[int] = None,
+    K_override: Optional[int] = None,
+    L_override: Optional[int] = None,
+    delta_t_override: Optional[float] = None,
+    velocity_override: Optional[float] = None,
+    compute_sdma: bool = True,
+) -> NetworkMobilityResult:
+    """
+    Executa a simulação temporal (dt) de mobilidade, Beam Tracking (Hold vs. Preditivo)
+    e SDMA Multi-usuário (MRC vs. Zero-Forcing) sobre a REDE COMPLETA (M APs × K UEs).
+    """
+    mob = config.mobility
+    snap_seed = config.seed if seed is None else int(seed)
+    K = config.K if K_override is None else int(K_override)
+    L = int(L_override if L_override is not None else mob.selected_L)
+    delta_t_s = float(delta_t_override if delta_t_override is not None else mob.selected_delta_t_s)
+    dt_s = float(mob.dt_s)
+    t_sim_s = float(mob.t_sim_s)
+    sigma_theta_deg = float(mob.sigma_theta_deg)
+    array_type = mob.array_type
+
+    n_steps = max(2, int(round(t_sim_s / dt_s)))
+    t_s = np.arange(n_steps, dtype=float) * dt_s
+    step_samples = max(1, int(round(delta_t_s / dt_s)))
+    update_indices = np.arange(0, n_steps, step_samples)
+
+    # Permite override limpo de velocidade sem mutar config original
+    if velocity_override is not None and abs(velocity_override - mob.selected_velocity_kmh) > 1e-9:
+        cfg_eff = SimulationConfig.from_dict(config.to_dict())
+        cfg_eff.mobility.selected_velocity_kmh = float(velocity_override)
+    else:
+        cfg_eff = config
+
+    ap_xy, ue_x, ue_y, ue_velocities_kmh, shadowing = generate_network_trajectories(
+        cfg_eff, t_s, seed=snap_seed, K_override=K
+    )
+    M = ap_xy.shape[0]
+    d_0 = config.channel.d_0
+    k_const = config.channel.k_const
+    n_exp = config.channel.pathloss_exp
+
+    # Distâncias (T, K, M) e AP servidor em cada instante
+    dx = ue_x[:, :, None] - ap_xy[None, None, :, 0]
+    dy = ue_y[:, :, None] - ap_xy[None, None, :, 1]
+    dists = np.maximum(np.hypot(dx, dy), d_0)
+    pl_all = (k_const / (dists**n_exp)) * shadowing[None, :, :]
+    serving_ap = np.argmax(pl_all, axis=2)  # (T, K)
+
+    # Azimute real de cada UE em relação ao seu AP servidor
+    t_idx = np.arange(n_steps)[:, None]
+    k_idx = np.arange(K)[None, :]
+    dx_srv = dx[t_idx, k_idx, serving_ap]
+    dy_srv = dy[t_idx, k_idx, serving_ap]
+    theta_real = np.arctan2(dy_srv, dx_srv)  # (T, K)
+
+    # Ruído de estimação de AoA idêntico entre Hold e Preditivo (comparação justa)
+    rng_err = np.random.default_rng(snap_seed + 909)
+    n_upd = len(update_indices) + 2
+    err_mat = (
+        np.deg2rad(rng_err.normal(0.0, sigma_theta_deg, size=(n_upd, K)))
+        if sigma_theta_deg > 0.0
+        else np.zeros((n_upd, K), dtype=float)
+    )
+
+    theta_hold = np.empty_like(theta_real)
+    theta_pred = np.empty_like(theta_real)
+    for k in range(K):
+        theta_hold[:, k] = _track_azimuth_segmented(
+            theta_real[:, k],
+            serving_ap[:, k],
+            step_samples,
+            dt_s,
+            delta_t_s,
+            sigma_theta_deg,
+            err_mat[:, k],
+            predictive=False,
+        )
+        theta_pred[:, k] = _track_azimuth_segmented(
+            theta_real[:, k],
+            serving_ap[:, k],
+            step_samples,
+            dt_s,
+            delta_t_s,
+            sigma_theta_deg,
+            err_mat[:, k],
+            predictive=True,
+        )
+
+    diff_hold = _wrap_angle_diff(theta_real - theta_hold)
+    diff_pred = _wrap_angle_diff(theta_real - theta_pred)
+    delta_theta_hold_deg = np.abs(np.rad2deg(diff_hold))
+    delta_theta_pred_deg = np.abs(np.rad2deg(diff_pred))
+
+    if array_type == "uca":
+        g_hold_lin = mrc_gain(theta_hold, theta_real, L=L)
+        g_pred_lin = mrc_gain(theta_pred, theta_real, L=L)
+    else:
+        # ULA orientado localmente ao broadside do setor do UE -> perda exata Eq. 2 vs Δθ
+        g_hold_lin = calc_ula_gain(np.clip(diff_hold, -np.pi / 2.0, np.pi / 2.0), 0.0, L=L)
+        g_pred_lin = calc_ula_gain(np.clip(diff_pred, -np.pi / 2.0, np.pi / 2.0), 0.0, L=L)
+
+    gain_ideal_db = float(10.0 * np.log10(float(L)))
+    gain_hold_db = 10.0 * np.log10(np.maximum(g_hold_lin, 1e-12))
+    gain_pred_db = 10.0 * np.log10(np.maximum(g_pred_lin, 1e-12))
+    loss_hold_db = np.maximum(gain_ideal_db - gain_hold_db, 0.0)
+    loss_pred_db = np.maximum(gain_ideal_db - gain_pred_db, 0.0)
+
+    # Avaliação multi-UE (interferência inter-usuário + SDMA MRC vs. ZF) em grade temporal rápida
+    eval_stride = max(1, n_steps // 300)
+    eval_idx = np.arange(0, n_steps, eval_stride)
+    t_eval_s = t_s[eval_idx]
+    Te = len(eval_idx)
+
+    p_tx_w = config.power_control.p_max_w
+    p_noise = config.noise_power_w
+    overhead_fraction = float(min(1.0, mob.t_overhead_s / delta_t_s))
+
+    # Alocação de canais inicial consistente com a política da simulação
+    ch_rng = np.random.default_rng(snap_seed + 17)
+    channels, is_agg = allocate_channels_vec(
+        serving_ap[0], M=M, N=config.N, policy=config.allocation_policy, rng=ch_rng
+    )
+    same_ch = (channels[:, None] == channels[None, :]) | is_agg[:, None] | is_agg[None, :]
+
+    def _eval_network_sinr(
+        theta_tgt_mat: np.ndarray, use_zf: bool = False
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        sinr_db_out = np.zeros((Te, K), dtype=float)
+        interf_dbm_out = np.zeros((Te, K), dtype=float)
+        sum_se_out = np.zeros(Te, dtype=float)
+
+        for ti, step_i in enumerate(eval_idx):
+            srv = serving_ap[step_i]  # (K,)
+            # Ângulos de TODOS os UEs i em relação ao AP servidor de cada UE k: phi_ki = angle(UE_i -> AP_{srv[k]})
+            dx_ki = ue_x[step_i, None, :] - ap_xy[srv, 0][:, None]  # (K, K)
+            dy_ki = ue_y[step_i, None, :] - ap_xy[srv, 1][:, None]  # (K, K)
+            phi_ki = np.arctan2(dy_ki, dx_ki)  # (K, K)
+            pl_ki = pl_all[step_i, :, :][:, srv].T  # pl_all[t, i, srv[k]] -> (K, K)
+
+            tgt_k = theta_tgt_mat[step_i]  # (K,)
+            if not use_zf:
+                if array_type == "uca":
+                    g_ant = mrc_gain(tgt_k[:, None], phi_ki, L=L)
+                else:
+                    ang_err_ki = _wrap_angle_diff(phi_ki - tgt_k[:, None])
+                    g_ant = calc_ula_gain(np.clip(ang_err_ki, -np.pi / 2.0, np.pi / 2.0), 0.0, L=L)
+                G_eff = pl_ki * g_ant * same_ch
+            else:
+                # Zero-Forcing espacial por AP servidor (cancela interferentes co-canal)
+                G_eff = np.zeros((K, K), dtype=float)
+                for m_id in range(M):
+                    u_in_ap = np.flatnonzero(srv == m_id)
+                    if u_in_ap.size == 0:
+                        continue
+                    # Vetores de direção reais de todos os K UEs vistos pelo AP m_id
+                    phi_m_real = np.arctan2(
+                        ue_y[step_i, :] - ap_xy[m_id, 1],
+                        ue_x[step_i, :] - ap_xy[m_id, 0],
+                    )
+                    # Estimativa de direção: usa ângulo rastreado dos UEs do AP e ângulo estimado dos co-canal
+                    phi_m_hat = phi_m_real.copy()
+                    phi_m_hat[u_in_ap] = tgt_k[u_in_ap]
+                    if array_type == "uca":
+                        A_real_m = uca_steering(phi_m_real, L).T  # (L, K)
+                        A_hat_m = uca_steering(phi_m_hat, L).T  # (L, K)
+                    else:
+                        # Mapeia azimute em [-pi/2, pi/2] relativo ao UE médio da célula
+                        ref_ang = float(phi_m_hat[u_in_ap[0]])
+                        A_real_m = ula_steering(
+                            np.clip(_wrap_angle_diff(phi_m_real - ref_ang), -np.pi / 2.0, np.pi / 2.0),
+                            L,
+                        ).T
+                        A_hat_m = ula_steering(
+                            np.clip(_wrap_angle_diff(phi_m_hat - ref_ang), -np.pi / 2.0, np.pi / 2.0),
+                            L,
+                        ).T
+
+                    for k_u in u_in_ap:
+                        co_ch = np.flatnonzero(same_ch[k_u])
+                        if co_ch.size <= 1:
+                            w_k = A_hat_m[:, k_u] / np.sqrt(float(L))
+                        else:
+                            # Mantém o UE desejado + até L-1 interferentes co-canal mais fortes
+                            if co_ch.size > L:
+                                others = co_ch[co_ch != k_u]
+                                top_o = others[np.argsort(pl_all[step_i, others, m_id])[-(L - 1) :]]
+                                sel = np.concatenate(([k_u], top_o))
+                            else:
+                                sel = co_ch
+                            A_sub = A_hat_m[:, sel]  # (L, S)
+                            S_cnt = A_sub.shape[1]
+                            gram = A_sub.conj().T @ A_sub + 1e-4 * float(L) * np.eye(S_cnt)
+                            W_sub = A_sub @ np.linalg.inv(gram)
+                            pos_k = int(np.flatnonzero(sel == k_u)[0])
+                            w_raw = W_sub[:, pos_k]
+                            w_k = w_raw / max(float(np.linalg.norm(w_raw)), 1e-12)
+
+                        g_row = np.abs(w_k.conj() @ A_real_m) ** 2  # (K,)
+                        G_eff[k_u, :] = pl_all[step_i, :, m_id] * g_row * same_ch[k_u]
+
+            rx_mat = G_eff * p_tx_w
+            useful = np.diag(rx_mat)
+            interf = np.maximum(np.sum(rx_mat, axis=1) - useful, 0.0)
+            sinr_lin = useful / (interf + p_noise)
+            sinr_db_out[ti] = 10.0 * np.log10(np.maximum(sinr_lin, 1e-12))
+            interf_dbm_out[ti] = 10.0 * np.log10(np.maximum(interf, 1e-18) * 1000.0)
+            sum_se_out[ti] = (1.0 - overhead_fraction) * float(np.sum(np.log2(1.0 + sinr_lin)))
+
+        return sinr_db_out, interf_dbm_out, sum_se_out
+
+    sinr_hold_db, interf_mrc_dbm, sum_se_hold = _eval_network_sinr(theta_hold, use_zf=False)
+    sinr_pred_db, _, sum_se_pred = _eval_network_sinr(theta_pred, use_zf=False)
+
+    if compute_sdma:
+        sinr_mrc_db = sinr_hold_db
+        sum_se_mrc = sum_se_hold
+        sinr_zf_db, interf_zf_dbm, sum_se_zf = _eval_network_sinr(theta_hold, use_zf=True)
+    else:
+        sinr_mrc_db = sinr_hold_db
+        sum_se_mrc = sum_se_hold
+        sinr_zf_db = sinr_hold_db
+        interf_zf_dbm = interf_mrc_dbm
+        sum_se_zf = sum_se_hold
+
+    return NetworkMobilityResult(
+        M=M,
+        K=K,
+        L=L,
+        area_m=config.area_m,
+        array_type=array_type,
+        delta_t_s=delta_t_s,
+        dt_s=dt_s,
+        t_overhead_s=mob.t_overhead_s,
+        sigma_theta_deg=sigma_theta_deg,
+        seed=snap_seed,
+        ap_xy=ap_xy,
+        t_s=t_s,
+        ue_x_m=ue_x,
+        ue_y_m=ue_y,
+        ue_velocities_kmh=ue_velocities_kmh,
+        serving_ap=serving_ap,
+        update_indices=update_indices,
+        beam_angles_final_rad=theta_hold[-1],
+        delta_theta_hold_deg=delta_theta_hold_deg,
+        delta_theta_pred_deg=delta_theta_pred_deg,
+        gain_ideal_db=gain_ideal_db,
+        gain_hold_db=gain_hold_db,
+        gain_pred_db=gain_pred_db,
+        loss_hold_db=loss_hold_db,
+        loss_pred_db=loss_pred_db,
+        t_eval_s=t_eval_s,
+        sinr_hold_db=sinr_hold_db,
+        sinr_pred_db=sinr_pred_db,
+        sum_se_hold=sum_se_hold,
+        sum_se_pred=sum_se_pred,
+        sinr_mrc_db=sinr_mrc_db,
+        sinr_zf_db=sinr_zf_db,
+        interf_mrc_dbm=interf_mrc_dbm,
+        interf_zf_dbm=interf_zf_dbm,
+        sum_se_mrc=sum_se_mrc,
+        sum_se_zf=sum_se_zf,
+        overhead_fraction=overhead_fraction,
+        mean_delta_theta_hold_deg=float(np.mean(delta_theta_hold_deg)),
+        max_delta_theta_hold_deg=float(np.max(delta_theta_hold_deg)),
+        mean_delta_theta_pred_deg=float(np.mean(delta_theta_pred_deg)),
+        mean_loss_hold_db=float(np.mean(loss_hold_db)),
+        max_loss_hold_db=float(np.max(loss_hold_db)),
+        mean_loss_pred_db=float(np.mean(loss_pred_db)),
+        max_loss_pred_db=float(np.max(loss_pred_db)),
+        mean_sum_se_hold=float(np.mean(sum_se_hold)),
+        mean_sum_se_pred=float(np.mean(sum_se_pred)),
+        mean_sum_se_mrc=float(np.mean(sum_se_mrc)),
+        mean_sum_se_zf=float(np.mean(sum_se_zf)),
+    )
+
+
+def run_network_mobility_tradeoff(
+    config: SimulationConfig,
+    seed: Optional[int] = None,
+    K_override: Optional[int] = None,
+) -> list[dict[str, Any]]:
+    """
+    Avalia o trade-off ΔT × L (Hold e Preditivo) para a REDE COMPLETA (M APs × K UEs).
+    """
+    mob = config.mobility
+    rows: list[dict[str, Any]] = []
+    for L_val in mob.L_list:
+        for dt_val in mob.delta_t_list_s:
+            res = run_network_mobility(
+                config,
+                seed=seed,
+                K_override=K_override,
+                L_override=int(L_val),
+                delta_t_override=float(dt_val),
+                compute_sdma=False,
+            )
+            rows.append(
+                {
+                    "tracking_mode": "hold",
+                    "v_kmh": mob.selected_velocity_kmh,
+                    "L": int(L_val),
+                    "delta_t_ms": round(dt_val * 1000.0, 1),
+                    "mean_loss_db": res.mean_loss_hold_db,
+                    "max_loss_db": res.max_loss_hold_db,
+                    "mean_se_net": res.mean_sum_se_hold,
+                    "overhead_pct": res.overhead_fraction * 100.0,
+                }
+            )
+            if mob.compare_predictive:
+                rows.append(
+                    {
+                        "tracking_mode": "predictive",
+                        "v_kmh": mob.selected_velocity_kmh,
+                        "L": int(L_val),
+                        "delta_t_ms": round(dt_val * 1000.0, 1),
+                        "mean_loss_db": res.mean_loss_pred_db,
+                        "max_loss_db": res.max_loss_pred_db,
+                        "mean_se_net": res.mean_sum_se_pred,
+                        "overhead_pct": res.overhead_fraction * 100.0,
+                    }
+                )
+    return rows

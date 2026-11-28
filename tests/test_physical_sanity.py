@@ -33,12 +33,16 @@ from simulator import (  # noqa: E402
     mrc_gain,
     optimal_sinr_power_control,
     plotar_mapa,
+    resolve_comparison_flags,
     run_handover_simulation,
     run_mobile_sdma,
     run_mobility_scenario,
     run_monte_carlo,
+    run_network_handover,
+    run_network_mobility,
     run_power_control,
     run_single_snapshot,
+    run_snapshot_comparison,
     smb_gains,
     ula_2d_gain,
 )
@@ -368,3 +372,105 @@ def test_core_has_no_streamlit_imports():
             elif isinstance(node, ast.ImportFrom):
                 if node.module:
                     assert not node.module.startswith("streamlit"), f"Streamlit importado em {py_file}"
+
+
+# ---------------------------------------------------------------------------
+# 10. Comparação Automática + Mobilidade e Handover na Rede Completa (M × K)
+# ---------------------------------------------------------------------------
+
+
+def test_auto_comparison_mode_and_snapshot_comparison():
+    cfg_ant_only = SimulationConfig(
+        M=4,
+        K=4,
+        k_scenarios=(4,),
+        monte_carlo_runs=5,
+        comparison_mode="auto",
+        antenna=AntennaConfig(models=("omni", "smb")),
+        power_control=PowerControlConfig(algorithms=("full_power",)),
+    )
+    assert resolve_comparison_flags(cfg_ant_only) == (True, False, "antennas")
+    mc_a = run_monte_carlo(cfg_ant_only)
+    assert set(mc_a.antenna_metrics.keys()) == {"omni", "smb"}
+    assert not mc_a.power_metrics
+
+    cfg_pwr_only = SimulationConfig(
+        M=4,
+        K=4,
+        k_scenarios=(4,),
+        monte_carlo_runs=5,
+        comparison_mode="auto",
+        antenna=AntennaConfig(models=("mrc",)),
+        power_control=PowerControlConfig(algorithms=("full_power", "dual_loop")),
+    )
+    assert resolve_comparison_flags(cfg_pwr_only) == (False, True, "power")
+    mc_p = run_monte_carlo(cfg_pwr_only)
+    assert not mc_p.antenna_metrics
+    assert set(mc_p.power_metrics.keys()) == {"full_power", "dual_loop"}
+
+    cfg_both = SimulationConfig(
+        M=4,
+        K=4,
+        k_scenarios=(4,),
+        monte_carlo_runs=5,
+        comparison_mode="auto",
+        antenna=AntennaConfig(models=("omni", "mrc")),
+        power_control=PowerControlConfig(algorithms=("full_power", "dual_loop")),
+    )
+    assert resolve_comparison_flags(cfg_both) == (True, True, "both")
+    comp = run_snapshot_comparison(cfg_both)
+    assert set(comp["antennas"].keys()) == {"omni", "mrc"}
+    assert set(comp["power"].keys()) == {"full_power", "dual_loop"}
+
+
+def test_network_mobility_full_grid_and_predictive_tracking():
+    cfg = SimulationConfig(
+        M=9,
+        K=6,
+        seed=42,
+        ue_mode="mobile",
+        mobility=MobilityConfig(
+            selected_velocity_kmh=120.0,
+            selected_delta_t_s=0.100,
+            selected_L=32,
+            dt_s=0.005,
+            t_sim_s=3.0,
+            sigma_theta_deg=0.0,
+        ),
+    )
+    snap = run_single_snapshot(cfg)
+    res = run_network_mobility(cfg, seed=snap.seed, K_override=len(snap.ues))
+
+    assert res.M == 9 and res.K == 6
+    assert res.ue_x_m.shape[1] == 6
+    assert res.loss_hold_db.shape == res.loss_pred_db.shape
+    # Posições iniciais t=0 devem coincidir exatamente com o Snapshot
+    np.testing.assert_allclose(res.ue_x_m[0], snap.ue_xy[:, 0], atol=1e-9)
+    np.testing.assert_allclose(res.ue_y_m[0], snap.ue_xy[:, 1], atol=1e-9)
+    # Sem ruído de AoA, o rastreamento preditivo deve reduzir a perda por desalinhamento
+    assert res.mean_loss_pred_db < res.mean_loss_hold_db
+    # ZF deve manter Sum-SE >= MRC na rede co-canal
+    assert res.mean_sum_se_zf >= res.mean_sum_se_mrc * 0.95
+
+
+def test_network_handover_full_grid_soft_outperforms_hard():
+    cfg = SimulationConfig(
+        M=9,
+        K=6,
+        seed=42,
+        ue_mode="mobile",
+        mobility=MobilityConfig(selected_velocity_kmh=120.0),
+        handover=HandoverConfig(
+            t_ho_s=20.0,
+            ho_step_s=0.2,
+            p_min_dbm_network=-100.0,
+            hysteresis_db=0.0,
+            ttt_ms=0.0,
+        ),
+    )
+    res = run_network_handover(cfg)
+    assert res.M == 9 and res.K == 6
+    assert res.hard_serving_ap.shape == (len(res.t_s), 6)
+    assert res.soft_outage_rate_pct <= res.hard_outage_rate_pct + 1e-9
+    assert res.mean_snr_gain_soft_vs_hard_db >= -1e-9
+

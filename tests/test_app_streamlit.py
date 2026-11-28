@@ -8,7 +8,11 @@ from pathlib import Path
 
 from streamlit.testing.v1 import AppTest
 
-from app.components.charts import build_snapshot_map_2d, build_snapshot_map_3d
+from app.components.charts import (
+    build_snapshot_kpis_2x2_figure,
+    build_snapshot_map_2d,
+    build_snapshot_map_3d,
+)
 from simulator.runner import run_single_snapshot
 from simulator.schemas import SimulationConfig
 
@@ -60,7 +64,6 @@ def test_plotly_snapshot_hover_rules_2d_and_3d() -> None:
         assert "Outage" in ap_tr.hovertemplate
         assert len(ap_tr.customdata) == len(snap.aps)
 
-        # Verifica correspondência exata entre customdata dos APs e snapshot.aps
         for ap, row in zip(snap.aps, ap_tr.customdata):
             assert row[0] == ap.ap_id
             assert str(ap.num_ues) in str(row[3])
@@ -75,29 +78,39 @@ def test_plotly_snapshot_hover_rules_2d_and_3d() -> None:
             assert "Capacidade" in tr.hovertemplate
             assert "Status" in tr.hovertemplate
 
+    # Valida também o grid 2x2 de KPIs instantâneos do Snapshot
+    fig_kpi = build_snapshot_kpis_2x2_figure(snap)
+    assert len(fig_kpi.data) == 5
 
-def test_streamlit_app_initial_load_and_monte_carlo_flow() -> None:
+
+def test_streamlit_static_5_tabs_and_auto_monte_carlo() -> None:
     """
-    Carrega app/main_app.py via AppTest:
-      1. Verifica abertura imediata no Snapshot sem exceções.
-      2. Executa Monte Carlo rápido (20 rodadas, K=1,4) e valida renderização na Tela 1.
-      3. Testa alternância para modo 3D e aplicação de preset.
+    Valida o fluxo completo no Modo Estático:
+      1. Apenas 5 abas visíveis (Mobilidade e Handover ocultas no modo estático).
+      2. Snapshot + KPIs instantâneos carregam imediatamente sem exceções.
+      3. Monte Carlo no modo 'auto' com múltiplas antenas e múltiplos algoritmos de potência
+         gera automaticamente ambos os comparativos (antenna_metrics e power_metrics).
+      4. Navegação de rodadas (▶) na Tabela de UEs e aplicação de preset funcionam sem erro.
     """
     at = AppTest.from_file(APP_FILE, default_timeout=60.0)
     at.run()
 
     assert not at.exception, f"Exceções no carregamento inicial: {[e.value for e in at.exception]}"
     assert not at.error, f"Erros no carregamento inicial: {[e.value for e in at.error]}"
-    assert "current_snapshot" in at.session_state
+    tab_labels = [t.label for t in at.tabs]
+    assert "🗺️ Snapshot & Visão Geral" in tab_labels
+    assert "📋 Tabela de UEs & Rodadas" in tab_labels
+    assert "🚗 Mobilidade & Beam Tracking" not in tab_labels
+    assert "🔄 Handover (Hard vs. Soft)" not in tab_labels
+
     snap = at.session_state["current_snapshot"]
     assert len(snap.aps) == 9
     assert len(snap.ues) == 4
     assert at.session_state.get("mc_result") is None
 
-    # Configura Monte Carlo rápido (20 rodadas, K=1,4) e dispara execução
-    at.sidebar.number_input(key="sb_mc_runs").set_value(20)
+    # Dispara Monte Carlo rápido no modo 'auto' (default tem 5 antenas e 3 algoritmos)
+    at.sidebar.number_input(key="sb_mc_runs").set_value(15)
     at.sidebar.text_input(key="sb_k_scenarios").set_value("1, 4")
-    at.sidebar.selectbox(key="sb_comp_mode").select("both")
     run_btn = next(b for b in at.sidebar.button if "Executar Monte Carlo" in b.label)
     run_btn.click().run()
 
@@ -105,15 +118,20 @@ def test_streamlit_app_initial_load_and_monte_carlo_flow() -> None:
     mc_res = at.session_state.get("mc_result")
     assert mc_res is not None
     assert mc_res.k_scenarios == (1, 4)
-    assert mc_res.power_metrics
-    assert mc_res.antenna_metrics
+    assert len(mc_res.antenna_metrics) > 1
+    assert len(mc_res.power_metrics) > 1
     assert mc_res.round_inspector is not None
 
-    # Alterna visualização do Snapshot para 3D (Bônus) e verifica ausência de erros
+    # Testa stepper ▶ na Aba 4 (Tabela de UEs & Rodadas) sem erro de session_state
+    at.button(key="tab_users_next").click().run()
+    assert not at.exception, f"Exceções ao avançar rodada: {[e.value for e in at.exception]}"
+    assert at.session_state["tab_users_round_num"] == 2
+
+    # Alterna visualização do Snapshot para 3D (Bônus)
     at.radio(key="tab1_view_mode").set_value("3D (Bônus)").run()
     assert not at.exception, f"Exceções no modo 3D: {[e.value for e in at.exception]}"
 
-    # Aplica um preset dos roteiros pela sidebar e verifica sincronização dos dropdowns
+    # Aplica um preset dos roteiros pela sidebar e verifica sincronização
     at.sidebar.selectbox(key="sb_preset_sel").select(
         "Parte 2 Ex. 6–7 — PAPOA + Carrier Aggregation (M=16, N=2)"
     ).run()
@@ -124,3 +142,23 @@ def test_streamlit_app_initial_load_and_monte_carlo_flow() -> None:
     assert at.session_state["sb_alloc"] == "papoa_ca"
     assert at.session_state["tab1_ant_select"] == "omni"
     assert at.session_state["tab1_pwr_select"] == "full_power"
+
+
+def test_streamlit_mobile_mode_reveals_7_tabs_full_network() -> None:
+    """
+    Ao ativar 'Em Movimento (Mobilidade / Handover)', as 7 abas aparecem e
+    simulam a rede completa (M APs × K UEs) sem exceções.
+    """
+    at = AppTest.from_file(APP_FILE, default_timeout=60.0)
+    at.run()
+    static_labels = [t.label for t in at.tabs]
+    assert "🚗 Mobilidade & Beam Tracking" not in static_labels
+    assert "🔄 Handover (Hard vs. Soft)" not in static_labels
+
+    at.sidebar.radio(key="sb_ue_mode").set_value("Em Movimento (Mobilidade / Handover)").run()
+    assert not at.exception, f"Exceções no modo Em Movimento: {[e.value for e in at.exception]}"
+    assert not at.error, f"Erros no modo Em Movimento: {[e.value for e in at.error]}"
+    mobile_labels = [t.label for t in at.tabs]
+    assert "🚗 Mobilidade & Beam Tracking" in mobile_labels
+    assert "🔄 Handover (Hard vs. Soft)" in mobile_labels
+    assert len(mobile_labels) == len(static_labels) + 2

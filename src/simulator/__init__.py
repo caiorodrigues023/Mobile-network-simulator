@@ -41,7 +41,7 @@ from .config import (
     PLOTLY_COLORS,
 )
 from .entities import AP, UE
-from .handover import HANDOVER_REGISTRY, run_handover_simulation
+from .handover import HANDOVER_REGISTRY, run_handover_simulation, run_network_handover
 from .metrics import (
     SINR,
     SINR_adaptive,
@@ -53,9 +53,12 @@ from .metrics import (
 )
 from .mobility import (
     TRACKING_REGISTRY,
+    generate_network_trajectories,
     run_mobile_sdma,
     run_mobility_scenario,
     run_mobility_tradeoff_study,
+    run_network_mobility,
+    run_network_mobility_tradeoff,
 )
 from .runner import (
     aplicar_controle_potencia,
@@ -64,8 +67,10 @@ from .runner import (
     distribuir_AP,
     distribute_aps_xy,
     mc_round_seed,
+    resolve_comparison_flags,
     run_monte_carlo,
     run_single_snapshot,
+    run_snapshot_comparison,
     simular_experimento,
     simular_scichal4a,
     simular_scichal4a_vetorizado,
@@ -79,6 +84,8 @@ from .schemas import (
     MobilityConfig,
     MobilityResult,
     MonteCarloResult,
+    NetworkHandoverResult,
+    NetworkMobilityResult,
     PowerControlConfig,
     ScenarioMetrics,
     SDMAResult,
@@ -119,6 +126,8 @@ __all__ = [
     "MobilityResult",
     "SDMAResult",
     "HandoverResult",
+    "NetworkMobilityResult",
+    "NetworkHandoverResult",
     # entities
     "AP",
     "UE",
@@ -160,16 +169,22 @@ __all__ = [
     "area_spectrum_efficiency",
     # mobility & handover
     "TRACKING_REGISTRY",
+    "generate_network_trajectories",
     "run_mobility_scenario",
     "run_mobility_tradeoff_study",
     "run_mobile_sdma",
+    "run_network_mobility",
+    "run_network_mobility_tradeoff",
     "HANDOVER_REGISTRY",
     "run_handover_simulation",
+    "run_network_handover",
     # runner
     "mc_round_seed",
     "distribute_aps_xy",
     "compute_coverage_heatmap",
+    "resolve_comparison_flags",
     "run_single_snapshot",
+    "run_snapshot_comparison",
     "run_monte_carlo",
     "distribuir_AP",
     "cenario_aleatorio",

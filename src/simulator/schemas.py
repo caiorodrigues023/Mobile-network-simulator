@@ -58,7 +58,7 @@ VALID_POWER_ALGORITHMS = frozenset(
 VALID_ALLOCATION_POLICIES = frozenset({"full_reuse", "papoa", "papoa_ca", "random", "ortogonal"})
 VALID_TRACKING_MODES = frozenset({"hold", "predictive"})
 VALID_HANDOVER_MODES = frozenset({"hard", "soft"})
-VALID_COMPARISON_MODES = frozenset({"antennas", "power", "both"})
+VALID_COMPARISON_MODES = frozenset({"auto", "antennas", "power", "both"})
 
 
 def _is_perfect_square(n: int) -> bool:
@@ -203,6 +203,7 @@ class MobilityConfig:
     enable_sdma: bool = True
     sdma_k_ues: int = 4
     sdma_combiner: str = "both"  # "mrc", "zf", "both"
+    mixed_speeds: bool = False
     seed: int = 42
 
     def __post_init__(self) -> None:
@@ -239,6 +240,10 @@ class HandoverConfig:
     soft_combining: str = "selection"  # "selection" (Ex. 13) ou "macro_diversity"
     compare_hard_soft: bool = True
     mc_runs: int = 500
+    t_ho_s: float = 20.0
+    ho_step_s: float = 0.2
+    p_min_dbm_network: float = -102.0
+    shadowing_corr_dist_m: float = 50.0
     seed: int = 42
 
     def __post_init__(self) -> None:
@@ -269,7 +274,7 @@ class SimulationConfig:
     monte_carlo_runs: int = 500
     seed: int = 42
     ue_mode: str = "static"  # "static" ou "mobile"
-    comparison_mode: str = "power"  # "antennas", "power", "both"
+    comparison_mode: str = "auto"  # "auto", "antennas", "power", "both"
     snapshot_antenna_model: str = "mrc"
     snapshot_power_mode: str = "dual_loop"
     h_ap_m: float = 25.0
@@ -557,4 +562,103 @@ class HandoverResult:
     soft_handovers_mean: float
     hard_outage_rate_pct: float
     soft_outage_rate_pct: float
+    mean_snr_gain_soft_vs_hard_db: float
+
+
+@dataclass
+class NetworkMobilityResult:
+    """
+    Saída da simulação time-driven de mobilidade e beam tracking na REDE COMPLETA
+    (todos os M APs × K UEs em movimento sobre a área da simulação).
+    """
+
+    M: int
+    K: int
+    L: int
+    area_m: float
+    array_type: str
+    delta_t_s: float
+    dt_s: float
+    t_overhead_s: float
+    sigma_theta_deg: float
+    seed: int
+    ap_xy: np.ndarray  # (M, 2)
+    t_s: np.ndarray  # (T,)
+    ue_x_m: np.ndarray  # (T, K)
+    ue_y_m: np.ndarray  # (T, K)
+    ue_velocities_kmh: np.ndarray  # (K,)
+    serving_ap: np.ndarray  # (T, K) índices 0..M-1
+    update_indices: np.ndarray  # índices temporais onde ocorre medição ΔT
+    beam_angles_final_rad: np.ndarray  # (K,)
+    # Métricas de Beam Tracking (Hold vs. Preditivo) — todos os K UEs
+    delta_theta_hold_deg: np.ndarray  # (T, K)
+    delta_theta_pred_deg: np.ndarray  # (T, K)
+    gain_ideal_db: float
+    gain_hold_db: np.ndarray  # (T, K)
+    gain_pred_db: np.ndarray  # (T, K)
+    loss_hold_db: np.ndarray  # (T, K)
+    loss_pred_db: np.ndarray  # (T, K)
+    # Métricas de Rede / SDMA (MRC vs. Zero-Forcing) — avaliadas em t_eval_s
+    t_eval_s: np.ndarray  # (Te,)
+    sinr_hold_db: np.ndarray  # (Te, K)
+    sinr_pred_db: np.ndarray  # (Te, K)
+    sum_se_hold: np.ndarray  # (Te,)
+    sum_se_pred: np.ndarray  # (Te,)
+    sinr_mrc_db: np.ndarray  # (Te, K)
+    sinr_zf_db: np.ndarray  # (Te, K)
+    interf_mrc_dbm: np.ndarray  # (Te, K)
+    interf_zf_dbm: np.ndarray  # (Te, K)
+    sum_se_mrc: np.ndarray  # (Te,)
+    sum_se_zf: np.ndarray  # (Te,)
+    # KPIs agregados de toda a rede
+    overhead_fraction: float
+    mean_delta_theta_hold_deg: float
+    max_delta_theta_hold_deg: float
+    mean_delta_theta_pred_deg: float
+    mean_loss_hold_db: float
+    max_loss_hold_db: float
+    mean_loss_pred_db: float
+    max_loss_pred_db: float
+    mean_sum_se_hold: float
+    mean_sum_se_pred: float
+    mean_sum_se_mrc: float
+    mean_sum_se_zf: float
+
+
+@dataclass
+class NetworkHandoverResult:
+    """
+    Saída comparativa do motor de Handover (Hard vs. Soft) na REDE COMPLETA
+    (todos os M APs × K UEs percorrendo a área da simulação).
+    """
+
+    config: HandoverConfig
+    M: int
+    K: int
+    area_m: float
+    seed: int
+    p_min_dbm: float
+    ap_xy: np.ndarray  # (M, 2)
+    t_s: np.ndarray  # (T,)
+    ue_x_m: np.ndarray  # (T, K)
+    ue_y_m: np.ndarray  # (T, K)
+    ue_velocities_kmh: np.ndarray  # (K,)
+    rx_power_dbm: np.ndarray  # (T, K, M)
+    hard_serving_ap: np.ndarray  # (T, K) índices 0..M-1
+    soft_serving_ap: np.ndarray  # (T, K) índices 0..M-1
+    hard_outage_mask: np.ndarray  # (T, K)
+    soft_outage_mask: np.ndarray  # (T, K)
+    hard_snr_db: np.ndarray  # (T, K)
+    soft_snr_db: np.ndarray  # (T, K)
+    # Agregados por UE e de toda a rede
+    hard_handovers_per_ue: np.ndarray  # (K,)
+    soft_handovers_per_ue: np.ndarray  # (K,)
+    hard_outage_pct_per_ue: np.ndarray  # (K,)
+    soft_outage_pct_per_ue: np.ndarray  # (K,)
+    hard_outage_rate_pct: float
+    soft_outage_rate_pct: float
+    hard_handovers_total: int
+    soft_handovers_total: int
+    hard_handovers_mean: float
+    soft_handovers_mean: float
     mean_snr_gain_soft_vs_hard_db: float

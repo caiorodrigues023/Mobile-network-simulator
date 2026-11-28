@@ -5,19 +5,47 @@
 from __future__ import annotations
 
 import numpy as np
-import pandas as pd
 import streamlit as st
 
 from app.components.charts import (
+    build_antenna_baseline_gain_figure,
     build_cdfs_figure,
     build_kpi_2x2_figure,
+    build_snapshot_comparison_figure,
     build_snapshot_map_2d,
     build_snapshot_map_3d,
 )
 from app.components.sidebar import ANTENNA_OPTIONS, POWER_OPTIONS
 from simulator.config import MODEL_LABELS
-from simulator.runner import run_single_snapshot
+from simulator.runner import run_single_snapshot, run_snapshot_comparison
 from simulator.schemas import MonteCarloResult, SimulationConfig, SnapshotResult
+
+
+def render_snapshot_summary_cards(snap: SnapshotResult) -> None:
+    """
+    Renderiza os 2 blocos executivos trazidos da branch `interface`:
+      - Desempenho Agregado (Vazão Total, Sum-SE, UEs Ativos, Justiça de Jain, Outage)
+      - Qualidade de Sinal & Energia (SINR Médio, SINR 10º Pct Borda, Potência Tx, EE, Canais)
+    """
+    active_cnt = sum(1 for u in snap.ues if not u.is_blocked)
+    outage_cnt = sum(1 for u in snap.ues if u.is_outage)
+
+    b1, b2 = st.columns(2)
+    with b1.container(border=True):
+        st.caption(f"📊 **Desempenho Agregado** — Outage: {snap.outage_rate_pct:.1f}% ({outage_cnt}/{len(snap.ues)} UEs)")
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Sum-Capacity", f"{snap.sum_capacity_mbps:.1f} Mbps")
+        c2.metric("Sum-SE", f"{snap.sum_se_bps_hz:.2f} bps/Hz")
+        c3.metric("UEs Ativos", f"{active_cnt} / {len(snap.ues)}")
+        c4.metric("Justiça Jain", f"{snap.jain_fairness:.3f}")
+
+    with b2.container(border=True):
+        st.caption(f"📶 **Qualidade de Sinal & Energia** — N = {snap.N} canal(is) | ASE: {snap.ase_bps_hz_km2:.2f} bps/Hz/km²")
+        c5, c6, c7, c8 = st.columns(4)
+        c5.metric("SINR Médio", f"{snap.avg_sinr_db:+.1f} dB")
+        c6.metric("SINR 10º Pct", f"{snap.p10_sinr_db:+.1f} dB")
+        c7.metric("Potência Tx", f"{snap.total_tx_power_w:.3f} W")
+        c8.metric("Efic. Energ.", f"{snap.energy_efficiency_mbit_j:.1f} Mb/J")
 
 
 def render_tab_snapshot(
@@ -27,11 +55,11 @@ def render_tab_snapshot(
     """
     Tela 1:
       - Controles rápidos de inspeção (antena, potência, sortear seed, camadas, 2D/3D)
-      - Cards de métricas do snapshot atual
+      - Cards agrupados (Desempenho Agregado + Qualidade de Sinal & Energia)
       - Mapa Interativo Plotly (hover rico em UEs e APs; linhas/feixes com hoverinfo='skip')
-      - Logo abaixo (sempre mantendo o snapshot no topo), os gráficos comparativos do Monte Carlo!
+      - Comparativo instantâneo no Snapshot (quando >1 antena ou >1 potência selecionada)
+      - Logo abaixo, todos os gráficos comparativos do Monte Carlo (Antenas e/ou Potência)
     """
-    # Estado de inspeção local do snapshot
     if "snap_seed_active" not in st.session_state:
         st.session_state["snap_seed_active"] = int(config.seed)
     if "snap_last_sidebar_seed" not in st.session_state:
@@ -106,47 +134,6 @@ def render_tab_snapshot(
         key="tab1_hm_metric",
     )
 
-    # Inspetor de Rodadas do Monte Carlo (quando houver MC concluído)
-    if mc_result is not None and mc_result.round_inspector:
-        ri = mc_result.round_inspector
-        presets = ri["presets"]
-        with st.expander(
-            f"🔎 Inspetor de Rodadas do Monte Carlo (K={ri['K']} UEs, {ri['n_runs']} rodadas)",
-            expanded=False,
-        ):
-            r1, r2, r3 = st.columns([2.5, 1.5, 1.5])
-            preset_opts = {
-                "current": "📍 Seed Atual do Snapshot",
-                "first": f"1ª Rodada (#{presets['first']['round']}) — {presets['first']['sum_cap_mbps']:.1f} Mbps",
-                "last": f"Última Rodada (#{presets['last']['round']}) — {presets['last']['sum_cap_mbps']:.1f} Mbps",
-                "best": f"🏆 Melhor Rodada (#{presets['best']['round']}) — {presets['best']['sum_cap_mbps']:.1f} Mbps",
-                "median": f"⚖️ Rodada Mediana (#{presets['median']['round']}) — {presets['median']['sum_cap_mbps']:.1f} Mbps",
-                "worst": f"⚠️ Pior Rodada (#{presets['worst']['round']}) — {presets['worst']['sum_cap_mbps']:.1f} Mbps",
-            }
-            chosen_preset = r1.selectbox(
-                "Rodada-chave",
-                options=list(preset_opts.keys()),
-                format_func=lambda k: preset_opts[k],
-                key="tab1_mc_preset",
-            )
-            custom_round = r2.number_input(
-                "Ou rodada #k",
-                min_value=1,
-                max_value=int(ri["n_runs"]),
-                value=1,
-                step=1,
-                key="tab1_mc_round_k",
-            )
-            r3.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
-            if r3.button("📍 Carregar Rodada no Mapa", width="stretch"):
-                if chosen_preset != "current":
-                    st.session_state["snap_seed_active"] = int(presets[chosen_preset]["seed"])
-                else:
-                    st.session_state["snap_seed_active"] = int(
-                        ri["all_seeds"][int(custom_round) - 1]
-                    )
-                st.session_state["snap_k_override"] = int(ri["K"])
-
     # ------------------------------------------------------------------
     # Execução do Snapshot atual (rápida — milissegundos)
     # ------------------------------------------------------------------
@@ -164,24 +151,10 @@ def render_tab_snapshot(
     )
     st.session_state["current_snapshot"] = snap
 
-    # ------------------------------------------------------------------
-    # Cards resumo do Snapshot atual
-    # ------------------------------------------------------------------
-    m1, m2, m3, m4, m5 = st.columns(5)
-    m1.metric("SINR Média (Ativos)", f"{snap.avg_sinr_db:+.1f} dB", f"10º Pct: {snap.p10_sinr_db:+.1f} dB")
-    m2.metric("Sum-Capacity", f"{snap.sum_capacity_mbps:.1f} Mbps", f"Sum-SE: {snap.sum_se_bps_hz:.2f} bps/Hz")
-    m3.metric("Potência Tx Total", f"{snap.total_tx_power_w:.3f} W", f"Jain: {snap.jain_fairness:.3f}")
-    m4.metric("Eficiência Energética", f"{snap.energy_efficiency_mbit_j:.1f} Mb/J", f"ASE: {snap.ase_bps_hz_km2:.2f}")
-    m5.metric(
-        "Taxa de Outage",
-        f"{snap.outage_rate_pct:.1f}%",
-        f"{sum(u.is_outage for u in snap.ues)}/{len(snap.ues)} UEs",
-        delta_color="inverse",
-    )
+    # Cards estruturados (Desempenho Agregado + Qualidade de Sinal & Energia)
+    render_snapshot_summary_cards(snap)
 
-    # ------------------------------------------------------------------
     # Mapa Interativo (2D padrão ou 3D bônus)
-    # ------------------------------------------------------------------
     if is_3d:
         fig_map = build_snapshot_map_3d(
             snap, show_beams=show_beams, show_links=show_links, show_heatmap=show_heatmap
@@ -194,61 +167,35 @@ def render_tab_snapshot(
             show_heatmap=show_heatmap,
             show_interference=show_interf,
         )
-    st.plotly_chart(fig_map, width="stretch")
+    st.plotly_chart(fig_map, width="stretch", key="tab1_snapshot_map")
 
-    # Tabelas detalhadas do Snapshot em expander
-    with st.expander("📋 Inspecionar Tabelas de UEs e APs deste Snapshot", expanded=False):
-        t_ue, t_ap = st.tabs(["📱 UEs", "📡 APs"])
-        df_ues = pd.DataFrame(
-            [
-                {
-                    "UE": f"UE {u.ue_id}",
-                    "X (m)": round(u.x, 1),
-                    "Y (m)": round(u.y, 1),
-                    "AP": f"AP {u.serving_ap}",
-                    "Dist (m)": round(u.distance_m, 1),
-                    "AoA (°)": round(u.aoa_deg, 1),
-                    "Canal": "CA" if u.is_aggregated else u.channel,
-                    "Feixe": u.serving_beam,
-                    "P_tx (W)": round(u.tx_power_w, 4),
-                    "P_tx (dBm)": None if u.is_blocked else round(u.tx_power_dbm, 1),
-                    "Ganho (dB)": round(u.rx_gain_db, 1),
-                    "SINR (dB)": None if u.is_blocked else round(u.sinr_db, 2),
-                    "SE (bps/Hz)": round(u.se_bps_hz, 2),
-                    "Cap (Mbps)": round(u.capacity_mbps, 2),
-                    "γ_tar (dB)": None if u.gamma_tar_db is None else round(u.gamma_tar_db, 1),
-                    "Status": u.status,
-                }
-                for u in snap.ues
-            ]
-        )
-        t_ue.dataframe(df_ues, width="stretch", hide_index=True)
-        t_ue.download_button(
-            "📥 Exportar UEs (CSV)",
-            data=df_ues.to_csv(index=False).encode("utf-8"),
-            file_name=f"snapshot_ues_seed{snap.seed}.csv",
-            mime="text/csv",
-        )
-
-        df_aps = pd.DataFrame(
-            [
-                {
-                    "AP": f"AP {ap.ap_id}",
-                    "X (m)": round(ap.x, 1),
-                    "Y (m)": round(ap.y, 1),
-                    "Qtd. UEs": ap.num_ues,
-                    "UEs Conectados": (
-                        ", ".join(f"UE {uid}" for uid in ap.connected_ue_ids)
-                        if ap.connected_ue_ids
-                        else "Nenhum"
-                    ),
-                    "Sum-Capacity (Mbps)": round(ap.sum_capacity_mbps, 2),
-                    "UEs em Outage": ap.num_outage,
-                }
-                for ap in snap.aps
-            ]
-        )
-        t_ap.dataframe(df_aps, width="stretch", hide_index=True)
+    # Comparativo instantâneo no mesmo Snapshot (quando >1 antena ou >1 algoritmo selecionado)
+    has_multi_ant = len(config.antenna.models) > 1
+    has_multi_pwr = len(config.power_control.algorithms) > 1
+    if has_multi_ant or has_multi_pwr:
+        with st.expander(
+            f"⚡ Comparar Selecionados neste Mesmo Snapshot (Seed={snap.seed})",
+            expanded=False,
+        ):
+            comp = run_snapshot_comparison(
+                config,
+                seed=snap.seed,
+                K_override=len(snap.ues),
+                base_antenna=sel_ant,
+                base_power=sel_pwr,
+            )
+            if comp["antennas"]:
+                fig_ca = build_snapshot_comparison_figure(
+                    comp["antennas"],
+                    title=f"📡 Antenas Selecionadas no Mesmo Canal (Potência: {MODEL_LABELS.get(sel_pwr, sel_pwr)})",
+                )
+                st.plotly_chart(fig_ca, width="stretch", key="tab1_snap_comp_ant")
+            if comp["power"]:
+                fig_cp = build_snapshot_comparison_figure(
+                    comp["power"],
+                    title=f"⚡ Algoritmos de Potência no Mesmo Canal (Antena: {MODEL_LABELS.get(sel_ant, sel_ant)})",
+                )
+                st.plotly_chart(fig_cp, width="stretch", key="tab1_snap_comp_pwr")
 
     # ------------------------------------------------------------------
     # RESULTADOS DO MONTE CARLO NA MESMA TELA (LOGO ABAIXO DO SNAPSHOT)
@@ -256,8 +203,9 @@ def render_tab_snapshot(
     st.divider()
     if mc_result is None:
         st.info(
-            "Configure **Monte Carlo Runs** na barra lateral e clique em **▶️ Executar Monte Carlo** "
-            "para gerar todos os gráficos estatísticos comparativos diretamente aqui abaixo do Snapshot."
+            "Configure **Monte Carlo Runs**, selecione as **Antenas** e/ou **Algoritmos de Controle de Potência** "
+            "na barra lateral e clique em **▶️ Executar Monte Carlo** para gerar os gráficos comparativos diretamente aqui abaixo. "
+            "Você também já pode ver os gráficos por UE e por AP deste Snapshot na aba **📊 KPIs & Gráficos**."
         )
         return snap
 
@@ -266,45 +214,6 @@ def render_tab_snapshot(
         f"K ∈ {list(mc_result.k_scenarios)} — concluído em {mc_result.elapsed_s:.2f} s)"
     )
 
-    available_groups: list[tuple[str, str, dict]] = []
-    if mc_result.power_metrics:
-        available_groups.append(
-            (
-                "power",
-                f"⚡ Controle de Potência (Antena: {MODEL_LABELS.get(mc_result.config.snapshot_antenna_model, mc_result.config.snapshot_antenna_model)})",
-                mc_result.power_metrics,
-            )
-        )
-    if mc_result.antenna_metrics:
-        available_groups.append(
-            (
-                "antennas",
-                f"📡 Modelos de Antena (Potência: {MODEL_LABELS.get(mc_result.config.snapshot_power_mode, mc_result.config.snapshot_power_mode)})",
-                mc_result.antenna_metrics,
-            )
-        )
-
-    if not available_groups:
-        return snap
-
-    if len(available_groups) == 2:
-        grp_sel = st.radio(
-            "Grupo Comparativo (Monte Carlo na Tela 1)",
-            options=[0, 1],
-            format_func=lambda idx: available_groups[idx][1],
-            horizontal=True,
-            key="tab1_mc_group",
-        )
-    else:
-        grp_sel = 0
-
-    grp_key, grp_title, grp_metrics = available_groups[grp_sel]
-
-    # Painel 2x2 de KPIs comparativos
-    fig_kpi = build_kpi_2x2_figure(grp_metrics, mc_result.k_scenarios, title=f"Painel de KPIs — {grp_title}")
-    st.plotly_chart(fig_kpi, width="stretch")
-
-    # CDFs principais do cenário selecionado
     k_cdf = st.selectbox(
         "Carga K para inspeção rápida das CDFs nesta tela",
         options=list(mc_result.k_scenarios),
@@ -312,15 +221,62 @@ def render_tab_snapshot(
         format_func=lambda k: f"K = {k} UEs",
         key="tab1_mc_k_cdf",
     )
-    fig_cdf = build_cdfs_figure(
-        grp_metrics,
-        K=int(k_cdf),
-        gamma_min_db=mc_result.config.power_control.gamma_min_db,
-        gamma_tar_db=mc_result.config.power_control.gamma_tar_init_db,
-        gamma_max_db=mc_result.config.power_control.gamma_max_db,
-        power_metric="tx_dbm" if grp_key == "power" else "rx_dbm",
-        cap_metric="se" if grp_key == "power" else "mbps",
-    )
-    st.plotly_chart(fig_cdf, width="stretch")
+
+    # Renderiza AMBOS os grupos comparativos quando existirem (Antenas e/ou Controle de Potência)
+    if mc_result.antenna_metrics:
+        pwr_ref = MODEL_LABELS.get(
+            mc_result.config.snapshot_power_mode, mc_result.config.snapshot_power_mode
+        )
+        st.markdown(f"#### 📡 Comparativo entre Modelos de Antena (Potência fixa: {pwr_ref})")
+        fig_kpi_ant = build_kpi_2x2_figure(
+            mc_result.antenna_metrics,
+            mc_result.k_scenarios,
+            title=f"Painel de KPIs — Antenas (Potência: {pwr_ref})",
+        )
+        st.plotly_chart(fig_kpi_ant, width="stretch", key="tab1_mc_kpi_ant")
+
+        if len(mc_result.antenna_metrics) > 1:
+            fig_base = build_antenna_baseline_gain_figure(
+                mc_result.antenna_metrics, mc_result.k_scenarios, k_focus=int(k_cdf)
+            )
+            st.plotly_chart(fig_base, width="stretch", key="tab1_mc_base_ant")
+
+        fig_cdf_ant = build_cdfs_figure(
+            mc_result.antenna_metrics,
+            K=int(k_cdf),
+            gamma_min_db=mc_result.config.power_control.gamma_min_db,
+            gamma_tar_db=mc_result.config.power_control.gamma_tar_init_db,
+            gamma_max_db=mc_result.config.power_control.gamma_max_db,
+            power_metric="rx_dbm",
+            cap_metric="mbps",
+            title=f"CDFs Comparativas de Antenas — K = {k_cdf} UEs",
+        )
+        st.plotly_chart(fig_cdf_ant, width="stretch", key="tab1_mc_cdf_ant")
+
+    if mc_result.power_metrics:
+        if mc_result.antenna_metrics:
+            st.divider()
+        ant_ref = MODEL_LABELS.get(
+            mc_result.config.snapshot_antenna_model, mc_result.config.snapshot_antenna_model
+        )
+        st.markdown(f"#### ⚡ Comparativo entre Algoritmos de Controle de Potência (Antena fixa: {ant_ref})")
+        fig_kpi_pwr = build_kpi_2x2_figure(
+            mc_result.power_metrics,
+            mc_result.k_scenarios,
+            title=f"Painel de KPIs — Controle de Potência (Antena: {ant_ref})",
+        )
+        st.plotly_chart(fig_kpi_pwr, width="stretch", key="tab1_mc_kpi_pwr")
+
+        fig_cdf_pwr = build_cdfs_figure(
+            mc_result.power_metrics,
+            K=int(k_cdf),
+            gamma_min_db=mc_result.config.power_control.gamma_min_db,
+            gamma_tar_db=mc_result.config.power_control.gamma_tar_init_db,
+            gamma_max_db=mc_result.config.power_control.gamma_max_db,
+            power_metric="tx_dbm",
+            cap_metric="se",
+            title=f"CDFs Comparativas de Controle de Potência — K = {k_cdf} UEs",
+        )
+        st.plotly_chart(fig_cdf_pwr, width="stretch", key="tab1_mc_cdf_pwr")
 
     return snap

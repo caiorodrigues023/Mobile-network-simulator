@@ -685,6 +685,63 @@ def _consolidate_scenario_metrics(
     )
 
 
+def run_snapshot_comparison(
+    config: SimulationConfig,
+    seed: Optional[int] = None,
+    K_override: Optional[int] = None,
+    base_antenna: Optional[str] = None,
+    base_power: Optional[str] = None,
+) -> dict[str, dict[str, SnapshotResult]]:
+    """
+    Avalia instantaneamente, na MESMA seed e MESMO canal do Snapshot:
+      - `antennas`: todos os modelos selecionados em `config.antenna.models` (se > 1)
+        usando `base_power` fixo;
+      - `power`: todos os algoritmos selecionados em `config.power_control.algorithms` (se > 1)
+        usando `base_antenna` fixo.
+    """
+    snap_seed = config.seed if seed is None else int(seed)
+    ant_fix = base_antenna or config.snapshot_antenna_model
+    pwr_fix = base_power or config.snapshot_power_mode
+
+    ant_snaps: dict[str, SnapshotResult] = {}
+    if len(config.antenna.models) > 1:
+        for m in config.antenna.models:
+            ant_snaps[m] = run_single_snapshot(
+                config, antenna_model=m, power_mode=pwr_fix, seed=snap_seed, K_override=K_override
+            )
+
+    pwr_snaps: dict[str, SnapshotResult] = {}
+    if len(config.power_control.algorithms) > 1:
+        for a in config.power_control.algorithms:
+            pwr_snaps[a] = run_single_snapshot(
+                config, antenna_model=ant_fix, power_mode=a, seed=snap_seed, K_override=K_override
+            )
+
+    return {"antennas": ant_snaps, "power": pwr_snaps}
+
+
+def resolve_comparison_flags(config: SimulationConfig) -> tuple[bool, bool, str]:
+    """
+    Resolve automaticamente quais comparativos executar no Monte Carlo:
+      - 'auto': executa comparativo de Antenas sempre que >1 antena estiver selecionada,
+                e comparativo de Potência sempre que >1 algoritmo estiver selecionado
+                (se ambos tiverem tamanho 1, executa o grupo de potência para manter KPIs).
+      - 'antennas' / 'power' / 'both': respeita override explícito.
+    """
+    mode = config.comparison_mode
+    if mode == "auto":
+        multi_ant = len(config.antenna.models) > 1
+        multi_pwr = len(config.power_control.algorithms) > 1
+        if multi_ant and multi_pwr:
+            return True, True, "both"
+        if multi_ant:
+            return True, False, "antennas"
+        if multi_pwr:
+            return False, True, "power"
+        return True, True, "both"
+    return mode in ("antennas", "both"), mode in ("power", "both"), mode
+
+
 def run_monte_carlo(
     config: SimulationConfig,
     progress_callback: Optional[Callable[[float, str], None]] = None,
@@ -695,7 +752,8 @@ def run_monte_carlo(
     em `config.k_scenarios`, respeitando estritamente o Methodology Remark
     (mesmo canal, posições, shadowing e Rayleigh para todos os modelos/algoritmos).
 
-    Modos de comparação (Decisão 6-B):
+    Modos de comparação:
+      - 'auto'     : detecta automaticamente múltiplas antenas e/ou múltiplos algoritmos.
       - 'antennas' : compara `config.antenna.models` com `config.snapshot_power_mode` fixo.
       - 'power'    : compara `config.power_control.algorithms` com `config.snapshot_antenna_model` fixo.
       - 'both'     : executa ambas as comparações limpas em paralelo sobre os mesmos canais.
@@ -705,10 +763,26 @@ def run_monte_carlo(
     k_list = config.k_scenarios
     n_runs = config.monte_carlo_runs
 
-    run_ant = config.comparison_mode in ("antennas", "both")
-    run_pwr = config.comparison_mode in ("power", "both")
+    run_ant, run_pwr, effective_mode = resolve_comparison_flags(config)
     ant_models = config.antenna.models if run_ant else ()
     pwr_algos = config.power_control.algorithms if run_pwr else ()
+
+    insp_ant = (
+        config.snapshot_antenna_model
+        if config.snapshot_antenna_model in ant_models
+        else (ant_models[0] if ant_models else None)
+    )
+    insp_pwr = (
+        config.snapshot_power_mode
+        if config.snapshot_power_mode in pwr_algos
+        else (pwr_algos[0] if pwr_algos else None)
+    )
+    iter_algos = ("dual_loop", "dpc_fixed", "max_sum", "max_prod")
+    hist_pwr_target = (
+        "dual_loop"
+        if "dual_loop" in pwr_algos
+        else next((a for a in pwr_algos if a in iter_algos), None)
+    )
 
     antenna_metrics: dict[str, dict[int, ScenarioMetrics]] = {m: {} for m in ant_models}
     power_metrics: dict[str, dict[int, ScenarioMetrics]] = {a: {} for a in pwr_algos}
@@ -776,8 +850,8 @@ def run_monte_carlo(
                 ch_rng = np.random.default_rng(r_seed + 17)
                 want_h = (
                     (not run_pwr)
-                    and m == config.snapshot_antenna_model
-                    and config.snapshot_power_mode == "dual_loop"
+                    and m == insp_ant
+                    and config.snapshot_power_mode in iter_algos
                     and r_idx < n_saved_histories
                 )
                 ev = _evaluate_single_realization(
@@ -810,7 +884,7 @@ def run_monte_carlo(
                     ev["conv_hist"]["antenna_model"] = m
                     conv_histories[K].append(ev["conv_hist"])
 
-                if K == inspector_k and (not run_pwr) and m == config.snapshot_antenna_model:
+                if K == inspector_k and (not run_pwr) and m == insp_ant:
                     inspector_records.append(
                         {
                             "round": r_idx + 1,
@@ -823,7 +897,7 @@ def run_monte_carlo(
             # --- Comparativo 2: Algoritmos de Controle de Potência (antena fixa do snapshot) ---
             for algo in pwr_algos:
                 ch_rng = np.random.default_rng(r_seed + 17)
-                want_h = algo == "dual_loop" and r_idx < n_saved_histories
+                want_h = algo == hist_pwr_target and r_idx < n_saved_histories
                 ev = _evaluate_single_realization(
                     ue_xy,
                     ap_xy,
@@ -854,7 +928,7 @@ def run_monte_carlo(
                     ev["conv_hist"]["antenna_model"] = config.snapshot_antenna_model
                     conv_histories[K].append(ev["conv_hist"])
 
-                if K == inspector_k and algo == config.snapshot_power_mode:
+                if K == inspector_k and algo == insp_pwr:
                     inspector_records.append(
                         {
                             "round": r_idx + 1,
@@ -900,7 +974,7 @@ def run_monte_carlo(
 
     return MonteCarloResult(
         config=config,
-        comparison_mode=config.comparison_mode,
+        comparison_mode=effective_mode,
         k_scenarios=k_list,
         elapsed_s=elapsed_s,
         representative_snapshot=rep_snapshot,

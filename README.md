@@ -6,15 +6,16 @@ Simulador de redes móveis celulares desenvolvido no **GTEL – Grupo de Telecom
 
 ## Recursos Principais
 
-- 🗺️ **Tela 1 — Snapshot Interativo + Monte Carlo Integrado**:
-  - Mapa interativo **2D (padrão)** e **3D WebGL (bônus opcional)** com lóbulos reais de antena (Omni, Setorial, SMB, MRC/UCA e ULA), enlaces UE↔AP, interferência co-canal e *heatmap* de cobertura (SINR, RSRP, Capacidade, AP dominante).
-  - **Hover rico** em cada UE (ID, posição, AP servidor, distância, AoA, canal/CA, potência Tx, ganho, SINR, SE, capacidade, meta $\gamma_{\text{tar}}$ e status) e em cada AP (ID, posição, quantidade e lista exata de UEs conectados, Sum-Capacity da célula e outages), com `hoverinfo="skip"` nas linhas e lóbulos.
-  - Execução de baterias de **Monte Carlo** exibindo o painel 2×2 de KPIs e CDFs diretamente abaixo do Snapshot, além de um **Inspetor de Rodadas** (melhor, mediana, pior ou rodada `#k`).
-- 📈 **Aba 2 — CDFs Empíricas Comparativas**: Potência (Tx/Rx), SINR (dB) e Eficiência Espectral / Capacidade com linhas de referência (10º/50º percentis, $\gamma_{\min}$, $\gamma_{\text{tar}}$, $\gamma_{\max}$).
-- 🏆 **Aba 3 — Painel Executivo de KPIs & Benchmark**: Painel 2×2 (Border SE 10º pct, Sum-SE, Eficiência Energética em escala log e Taxa de Outage), tabela completa (incluindo Índice de Jain e ASE) e exportação CSV/JSON.
-- 🚗 **Aba 4 — Mobilidade, Beam Tracking Preditivo & SDMA Móvel**: Motor *time-driven* (`dt = 1 ms`) comparando **Zero-Order Hold ($\Delta T$)** vs. **Rastreamento Preditivo ($\alpha\text{-}\beta$)**, trade-off de Eficiência Espectral Líquida com *overhead* de treinamento e **SDMA Multi-usuário Móvel** (MRC vs. Zero-Forcing).
-- 🔄 **Aba 5 — Handover (Hard vs. Soft)**: Travessia rodoviária entre APs com histerese (dB), *Time-to-Trigger* (ms), modo seleção ou macro-diversidade (*Active Set*), marcadores `"X"` de outage e contagem de *ping-pong*.
-- 🔬 **Aba 6 — Convergência Passo a Passo**: Evolução por iteração de $P_k$ (dBm / mW), SINR real e meta negociada $\gamma_{\text{tar}}$ para *Dual-Loop PC*, *DPC Fixo*, *MaxSum* e *MaxProd*, destacando eventos de bloqueio (Outage).
+- 🗺️ **Aba 1 — Snapshot Interativo & Visão Geral**:
+  - Mapa interativo **2D (padrão)** e **3D WebGL (bônus opcional)** com lóbulos reais de antena (Omni, Setorial, SMB, MRC/UCA e ULA), enlaces UE↔AP, interferência co-canal e *heatmap* de cobertura.
+  - Blocos **Desempenho Agregado** e **Qualidade de Sinal & Energia**, **hover rico** em cada UE e AP (`hoverinfo="skip"` em linhas/lóbulos) e **comparativo instantâneo no Snapshot** quando mais de uma antena ou algoritmo de potência estiver selecionado.
+  - Execução automática de **Monte Carlo** exibindo os comparativos de todas as **Antenas** e/ou todos os **Algoritmos de Controle de Potência** selecionados diretamente abaixo do Snapshot.
+- 📊 **Aba 2 — KPIs & Gráficos**: Grid 2×2 instantâneo do Snapshot (**SINR por UE**, **Capacidade por UE**, **Potência Tx por UE**, **Carga e Vazão por AP**) disponível antes mesmo do Monte Carlo + Benchmark Monte Carlo (Painel 2×2, **Ganho vs. Baseline em dB**, **Razão de Capacidade**, tabelas e exportação CSV/JSON).
+- 📈 **Aba 3 — CDFs Comparativas**: CDFs empíricas lado a lado para cada modelo de antena e/ou algoritmo de potência selecionado por carga $K$, com linhas de referência (10º/50º pct, $\gamma_{\min}$, $\gamma_{\text{tar}}$, $\gamma_{\max}$).
+- 📋 **Aba 4 — Tabela de UEs & Inspetor de Rodadas**: Busca textual, filtro por AP e por status, navegação pelas rodadas do Monte Carlo (`1ª`, `Última`, `Melhor`, `Mediana`, `Pior`, `#k` com `◀`/`▶`), carregamento direto no mapa e exportação CSV.
+- 🔬 **Aba 5 — Convergência dos Algoritmos**: Evolução passo a passo de $P_k$ (dBm / mW), SINR por UE e meta negociada $\gamma_{\text{tar}}$ (*Dual-Loop PC*, *DPC Fixo*, *MaxSum* e *MaxProd*) destacando bloqueios (Outage).
+- 🚗 **Aba 6 — Mobilidade, Beam Tracking & SDMA *(visível somente no modo "Em Movimento")***: Todos os $K$ UEs em movimento sobre a grade completa de $M$ APs, com mapa 2D de trajetórias, **curva de perda por desalinhamento angular $\Delta\theta$ ($L = 8, 16, 32$)**, evolução temporal **Hold vs. Tracking Preditivo** (agregado da rede ou por UE), *trade-off* de Sum-SE líquida e **SDMA (MRC vs. Zero-Forcing)**.
+- 🔄 **Aba 7 — Handover Hard vs. Soft *(visível somente no modo "Em Movimento")***: Todos os $K$ UEs atravessando a grade de $M$ APs com mapa 2D de eventos de Handover (`◆`) e Outage (`×`), KPIs agregados da rede e inspeção detalhada de qualquer UE individual.
 - 💾 **Presets dos Roteiros & JSON**: Presets prontos para `SciChal4A` e Exercícios das Partes 2–4, além de exportar/importar configurações completas em JSON.
 
 ---

@@ -52,17 +52,18 @@ mobile-network-simulator/
 │       ├── runner.py            # Snapshot único, Heatmap corrigido, Monte Carlo (+callback) e wrappers CLI
 │       └── visualization.py     # Gráficos Matplotlib retornando `fig` para uso via CLI
 ├── app/                         # Camada exclusiva da Interface Web (Streamlit + Plotly)
-│   ├── main_app.py              # Entrypoint Streamlit, st.session_state e layout em 6 abas
+│   ├── main_app.py              # Entrypoint Streamlit, st.session_state e layout dinâmico (5 ou 7 abas)
 │   ├── components/
-│   │   ├── sidebar.py           # Todos os controles editáveis, presets dos roteiros e JSON
-│   │   └── charts.py            # Fábrica Plotly (Mapa 2D/3D, CDFs, KPIs 2x2, Mobilidade, HO, Convergência)
+│   │   ├── sidebar.py           # Controles editáveis, escopo automático, presets dos roteiros e JSON
+│   │   └── charts.py            # Fábrica Plotly (Mapa 2D/3D, KPIs Snapshot/MC, Baseline, Rede Móvel, HO)
 │   └── tabs/
-│       ├── tab_snapshot.py      # TELA 1: Mapa Interativo do Snapshot + Gráficos do Monte Carlo abaixo
-│       ├── tab_cdfs.py          # Aba 2: CDFs Comparativas detalhadas por carga K
-│       ├── tab_kpis.py          # Aba 3: Painel 2x2 de KPIs + Tabela + Exportação CSV/JSON
-│       ├── tab_mobility.py      # Aba 4: Mobilidade, Beam Tracking (Hold vs. Preditivo), Trade-off e SDMA
-│       ├── tab_handover.py      # Aba 5: Handover (Hard vs. Soft) e detecção de Outage
-│       └── tab_convergence.py   # Aba 6: Convergência passo a passo (Dual-Loop / DPC / MaxSum / MaxProd)
+│       ├── tab_snapshot.py      # Aba 1: Mapa 2D/3D + Cards Agrupados + Comparativo Instantâneo + MC
+│       ├── tab_kpis.py          # Aba 2: KPIs Instantâneos do Snapshot (2x2) + Benchmark Antenas & Potência
+│       ├── tab_cdfs.py          # Aba 3: CDFs Comparativas (Antenas e/ou Controle de Potência)
+│       ├── tab_users.py         # Aba 4: Tabela de UEs/APs com busca, filtros e Inspetor de Rodadas
+│       ├── tab_convergence.py   # Aba 5: Convergência passo a passo (Dual-Loop / DPC / MaxSum / MaxProd)
+│       ├── tab_mobility.py      # Aba 6 (Modo Móvel): Mobilidade, Beam Tracking & SDMA na Rede Completa
+│       └── tab_handover.py      # Aba 7 (Modo Móvel): Handover Hard vs. Soft na Rede Completa (M × K)
 ├── tests/
 │   ├── test_physical_sanity.py  # 17 testes de invariantes físicos, determinismo e desacoplamento
 │   └── test_app_streamlit.py    # Testes E2E via Streamlit AppTest e validação de hover Plotly
@@ -102,20 +103,22 @@ mobile-network-simulator/
 - **Métricas (`metrics.py`)**: `calculate_sinr_vector`, `evaluate_physical_kpis` (com *checkbox* `apply_physical_limits` aplicando teto de saturação QAM $\gamma_{\max}$ e corte de outage $\gamma_{\min}$), `jain_fairness` e `area_spectrum_efficiency` (ASE).
 
 ### `mobility.py` e `handover.py`
-- **`mobility.py`**: Motor *time-driven* (`dt = 1 ms`) fiel à Atividade 2 (`x(t) = v (t - T_sim/2)`, `y = D`, ULA com $d = \lambda/2$):
-  - Compara **Zero-Order Hold** (`"hold"`, atraso $\Delta T$) contra **Rastreamento Preditivo** (`"predictive"`, filtro $\alpha\text{-}\beta$ adaptativo extrapolando $\hat{\theta}(t) = \hat{\theta}_k + \hat{\omega}_k \Delta t$ entre atualizações).
-  - Calcula a **Eficiência Espectral Líquida** descontando o *overhead* de treinamento: $\text{SE}_{\text{net}} = (1 - T_{\text{ovh}}/\Delta T)\,\log_2(1 + \text{SNR}(t))$.
-  - Motor **SDMA Multi-usuário Móvel** (`run_mobile_sdma`): $K \ge 1$ UEs móveis com trajetórias distintas comparando combinadores **MRC** vs. **Zero-Forcing** regularizado ($\mathbf{W}_{\text{ZF}} = \mathbf{H}(\mathbf{H}^H\mathbf{H} + \alpha\mathbf{I})^{-1}$) em cada passo `dt`.
-- **`handover.py`**: Travessia linear entre $M \ge 2$ APs (Parte 2 Ex. 12–13) comparando **Hard Handover** (com histerese em dB e *Time-to-Trigger* em ms opcionais) e **Soft Handover** (seleção ótima ou macro-diversidade por *Active Set*), contabilizando taxa de outage, eventos de troca (*ping-pong*) e ganho médio de SNR.
+- **`mobility.py`**:
+  - **Visão de Rede Completa (`run_network_mobility`, `run_network_mobility_tradeoff`):** Propaga **todos os $K$ UEs** sobre a mesma grade de $M$ APs do Snapshot (`area_m × area_m`) com reflexão elástica nas bordas, comparando **Zero-Order Hold** vs. **Rastreamento Preditivo (filtro $\alpha\text{-}\beta$)**, curva de perda por desalinhamento angular $\Delta\theta$ para $L \in \{8, 16, 32\}$, *trade-off* de Sum-SE líquida agregada e **SDMA Multi-usuário Móvel (MRC vs. Zero-Forcing)**.
+  - **Estudo analítico de 1 UE (`run_mobility_scenario`, `run_mobile_sdma`):** preservado no núcleo para compatibilidade com os testes unitários dos roteiros da Atividade 2.
+- **`handover.py`**:
+  - **Visão de Rede Completa (`run_network_handover`):** Executa **Hard Handover** (com histerese em dB e TTT em ms) vs. **Soft Handover** (seleção ótima ou macro-diversidade *Active Set*) simultaneamente para **todos os $K$ UEs** cruzando os $M$ APs com *shadowing* espacialmente correlacionado (Gudmundson), consolidando KPIs agregados da rede e séries individuais por UE.
+  - **Travessia linear rodoviária (`run_handover_simulation`):** preservada no núcleo para os testes da Parte 2 (Ex. 12–13).
 
 ### `runner.py`
-- **`run_single_snapshot()`**: Constrói um `SnapshotResult` completo (UEs, APs com lista exata de UEs conectados, Sum-Capacity por célula, contagem de outages, histórico de convergência e *heatmap* de cobertura opcional com ganho linear correto para SMB/MRC/ULA).
-- **`run_monte_carlo()`**: Orquestra baterias vetorizadas em múltiplas cargas $K$ com `progress_callback(frac, msg)`, sorteando a geometria e o canal (shadowing + Rayleigh) uma única vez por rodada para comparação estatística justa entre modelos. Separa limpo `power_metrics` e `antenna_metrics` conforme `comparison_mode` (`"power"`, `"antennas"`, `"both"`), evitando explosão combinatória, e armazena o índice do **Inspetor de Rodadas** (melhor, mediana, pior, 1ª, última e rodada `#k`).
+- **`run_single_snapshot()` & `run_snapshot_comparison()`**: Constrói um `SnapshotResult` completo (UEs, APs com lista exata de UEs conectados, Sum-Capacity por célula, contagem de outages, histórico de convergência e *heatmap* opcional) e permite comparar múltiplas antenas e/ou múltiplos algoritmos na mesma realização (seed).
+- **`run_monte_carlo()`**: Orquestra baterias vetorizadas em múltiplas cargas $K$ com `progress_callback(frac, msg)` e detecção automática (`comparison_mode="auto"`): sempre que houver mais de uma antena selecionada gera o bloco comparativo `antenna_metrics`, e sempre que houver mais de um algoritmo de potência selecionado gera o bloco `power_metrics` — mantendo ambos limpos e separados sobre o mesmo canal/seed, além do **Inspetor de Rodadas**.
 
 ---
 
 ## 4. Camada Web (`app/`) — Streamlit + Plotly
 
-- **Tela 1 (`tab_snapshot.py`)**: Abre imediatamente com o **Mapa Interativo 2D** do Snapshot atual (com alternância opcional para **3D + Heatmap**). Todos os traços auxiliares (linhas UE↔AP, grade de células, lóbulos de antena, interferência CCI e heatmap) usam `hoverinfo="skip"`, garantindo que o *hover* rico nos **UEs** (ID, posição, AP, distância, AoA, canal, potência Tx, ganho, SINR, SE, capacidade, meta $\gamma_{\text{tar}}$, status) e nos **APs** (ID, posição, quantidade de UEs, lista exata de UEs conectados, Sum-Capacity da célula e outages) responda instantaneamente. Após clicar em **▶️ Executar Monte Carlo**, o mapa permanece no topo e os gráficos comparativos (painel 2×2 de KPIs e CDFs) aparecem imediatamente abaixo.
-- **Performance reativa**: As simulações das abas de Mobilidade (`tab_mobility.py`) e Handover (`tab_handover.py`) usam `@st.cache_data` indexado pelas dataclasses de configuração, eliminando recomputações ao interagir com a Tela 1 ou demais abas.
-- **Presets & JSON**: A barra lateral inclui presets prontos dos roteiros (`SciChal4A`, Parte 2 Ex. 6–7, Parte 2 Ex. 9–11, Parte 3 RRM, Parte 4 Ex. 1–4) além de exportação/importação completa da configuração em JSON.
+- **Abas Dinâmicas (5 no Modo Estático / 7 no Modo Em Movimento):** No Modo Estático as abas de Mobilidade e Handover ficam ocultas e nenhum cálculo móvel é executado. Ao ativar **Em Movimento**, as Abas 6 e 7 aparecem simulando a **rede completa ($M$ APs × $K$ UEs)**.
+- **Tela 1 (`tab_snapshot.py`)**: Abre imediatamente no **Mapa Interativo 2D** (com bônus **3D + Heatmap**), blocos de cards **Desempenho Agregado** e **Qualidade de Sinal & Energia**, comparativo instantâneo no Snapshot e gráficos do **Monte Carlo** (Antenas e/ou Controle de Potência) diretamente abaixo. Todos os traços auxiliares usam `hoverinfo="skip"`, mantendo *hover* rico e instantâneo nos UEs e APs.
+- **KPIs Instantâneos & Tabela Dedicada (`tab_kpis.py`, `tab_users.py`)**: A Aba 2 exibe imediatamente o grid 2×2 por UE e por AP do Snapshot (SINR por UE, Capacidade por UE, Potência por UE, Carga & Vazão por AP) além do Benchmark Monte Carlo com gráficos vs. Baseline; a Aba 4 traz busca textual, filtro por AP/status e navegação de rodadas (`◀`/`▶`) do Monte Carlo.
+- **Performance reativa**: As simulações da rede móvel (`tab_mobility.py` e `tab_handover.py`) usam `@st.cache_data` indexado pela configuração e seed, garantindo fluidez ao alternar entre abas.
